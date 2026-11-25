@@ -113,6 +113,27 @@ try {
   /* storage blocked */
 }
 
+const RATE_KEY = "chiryo.rate";
+export const DEFAULT_RATE = 0.9;
+
+export function getSpeechRate(): number {
+  try {
+    const raw = localStorage.getItem(RATE_KEY);
+    const value = Number(raw);
+    return raw !== null && Number.isFinite(value) && value > 0 ? value : DEFAULT_RATE;
+  } catch {
+    return DEFAULT_RATE;
+  }
+}
+
+export function setSpeechRate(rate: number): void {
+  try {
+    localStorage.setItem(RATE_KEY, String(rate));
+  } catch {
+    /* storage blocked */
+  }
+}
+
 export function primeVoices(): void {
   const synth = window.speechSynthesis;
   if (!synth) return;
@@ -145,7 +166,7 @@ export function speakJapanese(text: string): boolean {
   if (synth.paused) synth.resume();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "ja-JP";
-  utterance.rate = 0.9;
+  utterance.rate = getSpeechRate();
   const gender = getVoiceGender();
   const { voice, pitch } = resolveVoice(gender);
   utterance.pitch = pitch;

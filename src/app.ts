@@ -3,7 +3,7 @@ import { detectPlatform, type PlatformInfo } from "./platform";
 import { politify } from "./polite";
 import { PRESETS, prepare } from "./prepare";
 import { hangulFromTokens } from "./reading";
-import { canSpeak, getChosenVoice, getVoiceGender, japaneseVoices, primeVoices, resolveVoice, setChosenPitch, setChosenVoice, setVoiceGender, speakJapanese, unlockSpeech, type VoiceGender } from "./speak";
+import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, japaneseVoices, primeVoices, resolveVoice, setChosenPitch, setChosenVoice, setVoiceGender, speakJapanese, unlockSpeech, type VoiceGender } from "./speak";
 import { createListener, type ListenState } from "./speech";
 import { fetchJaRomaji, translateKoToJa } from "./translate";
 import { getGeminiKey, setGeminiKey, translateWithGemini } from "./gemini";
@@ -395,7 +395,7 @@ function setupSettings(): void {
   const showState = (message?: string) => {
     state.textContent =
       message ?? (getGeminiKey() ? "현재 번역: Gemini (실패하면 구글 번역)" : "현재 번역: 구글 번역 (Gemini 키 없음)");
-    open.textContent = getGeminiKey() ? "설정 · Gemini" : "설정";
+    open.textContent = "설정";
   };
   showState();
   const voiceNote = document.querySelector<HTMLParagraphElement>("#voice-note");
@@ -443,6 +443,19 @@ function setupSettings(): void {
   pitchInput?.addEventListener("change", () => {
     setChosenPitch(getVoiceGender(), Number(pitchInput.value));
     showVoice();
+    sample();
+  });
+  const rateInput = document.querySelector<HTMLInputElement>("#voice-rate");
+  const rateValue = document.querySelector<HTMLSpanElement>("#voice-rate-value");
+  const showRate = () => {
+    const rate = rateInput ? Number(rateInput.value) : getSpeechRate();
+    if (rateValue) rateValue.textContent = `${rate.toFixed(2)}배`;
+  };
+  if (rateInput) rateInput.value = String(getSpeechRate());
+  showRate();
+  rateInput?.addEventListener("input", showRate);
+  rateInput?.addEventListener("change", () => {
+    setSpeechRate(Number(rateInput.value));
     sample();
   });
   testVoice?.addEventListener("click", sample);
