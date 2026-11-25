@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const dictSrc = path.join(root, "node_modules/kuromoji/dict");
+const vendoredDict = path.join(root, "vendor/kuromoji-dict");
+const dictSrc = existsSync(vendoredDict) ? vendoredDict : path.join(root, "node_modules/kuromoji/dict");
 
 function kuromojiDict(): Plugin {
   return {
