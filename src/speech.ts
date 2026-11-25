@@ -1,3 +1,4 @@
+import { LANGS, type PatientLang } from "./lang";
 import { detectPlatform, restartDelay, type PlatformKind } from "./platform";
 
 export type RecSlice = { isFinal: boolean; transcript: string };
@@ -14,11 +15,11 @@ export function collectUtterance(results: RecSlice[], fromIndex: number): { fina
   return { finals, interim: interim.join(" ") };
 }
 
-export type SpeechLang = "ko" | "ja";
+export type SpeechLang = "ko" | PatientLang;
 
 /** BCP-47 tag the recognizer listens in. */
 export function recognitionLang(lang: SpeechLang): string {
-  return lang === "ja" ? "ja-JP" : "ko-KR";
+  return lang === "ko" ? "ko-KR" : LANGS[lang].tag;
 }
 
 /** Korean sentence-final endings (polite/plain requests, statements, questions). */
@@ -28,8 +29,12 @@ const SENTENCE_END = /(요|다|까|죠|니다|세요|래|자|네|군|지)[\s.?!~
 const SENTENCE_END_JA =
   /(です|ます|ました|ません|でした|ましょう|ください|下さい|ない|か|ね|よ|な|わ|た|だ|い)[。？！?!…\s]*$|[。？！?!]\s*$/;
 
+/** English and Arabic have no reliable sentence-final words, so only punctuation counts. */
+const SENTENCE_END_PUNCT = /[.?!؟。？！]\s*$/;
+
 /** True when the buffered text looks like a complete sentence in the given language. */
 export function endsSentence(text: string, lang: SpeechLang = "ko"): boolean {
+  if (lang === "en" || lang === "ar") return SENTENCE_END_PUNCT.test(text.trim());
   return (lang === "ja" ? SENTENCE_END_JA : SENTENCE_END).test(text.trim());
 }
 
@@ -41,9 +46,12 @@ export function endsSentenceJa(text: string): boolean {
 /** Silence (ms) to wait before translating: short once a sentence ending is heard, long otherwise. */
 export const PAUSE_AFTER_ENDING = 700;
 export const PAUSE_WITHOUT_ENDING = 3000;
+/** English/Arabic patients: endings cannot be heard, so a middle pause decides. */
+export const PAUSE_NO_ENDING_WORDS = 1500;
 
 export function flushDelay(text: string, lang: SpeechLang = "ko"): number {
-  return endsSentence(text, lang) ? PAUSE_AFTER_ENDING : PAUSE_WITHOUT_ENDING;
+  if (endsSentence(text, lang)) return PAUSE_AFTER_ENDING;
+  return lang === "en" || lang === "ar" ? PAUSE_NO_ENDING_WORDS : PAUSE_WITHOUT_ENDING;
 }
 
 /**
@@ -75,8 +83,14 @@ export function appendChunk(pending: string, chunk: string, lang: SpeechLang = "
   const c = collapseRepeats(chunk);
   if (!c) return pending;
   if (!pending) return c;
-  if (c.startsWith(pending)) return c;
-  if (pending.endsWith(c) || pending.includes(c)) return pending;
+  if (lang === "en" || lang === "ar") {
+    // Whole words only: a short answer such as "no" must not vanish inside "know".
+    if (` ${c} `.startsWith(` ${pending} `)) return c;
+    if (` ${pending} `.includes(` ${c} `)) return pending;
+  } else {
+    if (c.startsWith(pending)) return c;
+    if (pending.endsWith(c) || pending.includes(c)) return pending;
+  }
   const pw = pending.split(" ");
   const cw = c.split(" ");
   for (let k = Math.min(pw.length, cw.length); k >= 1; k--) {

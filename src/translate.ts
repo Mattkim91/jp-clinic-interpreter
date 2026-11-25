@@ -1,3 +1,4 @@
+import type { PatientLang } from "./lang";
 import { cleanJa } from "./polite";
 
 const TIMEOUT_MS = 8000;
@@ -50,17 +51,17 @@ function findRomaji(data: unknown): string | null {
   return null;
 }
 
-async function translateClients5(q: string): Promise<string> {
-  const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=ko&tl=ja&q=${q}`;
+async function translateClients5(q: string, tl: PatientLang): Promise<string> {
+  const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=ko&tl=${tl}&q=${q}`;
   return parseClients5(await getJson(url));
 }
 
-async function translateGtx(q: string): Promise<string> {
-  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=ja&dt=t&dt=rm&dj=1&q=${q}`;
+async function translateGtx(q: string, tl: PatientLang): Promise<string> {
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${tl}&dt=t&dt=rm&dj=1&q=${q}`;
   try {
     return parseGtx(await getJson(url));
   } catch {
-    const raw = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=ja&dt=t&dt=rm&q=${q}`;
+    const raw = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${tl}&dt=t&dt=rm&q=${q}`;
     return parseGtx(await getJson(raw));
   }
 }
@@ -69,15 +70,16 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Keyless Korean → Japanese. clients5 first, then the public gtx endpoint. */
-export async function translateKoToJa(korean: string): Promise<string> {
+/** Keyless Korean → patient language. clients5 first, then the public gtx endpoint. */
+export async function translateFromKo(korean: string, lang: PatientLang): Promise<string> {
   const q = encodeURIComponent(korean);
   const attempts = [translateClients5, translateClients5, translateGtx, translateGtx];
   let last: unknown;
   for (let i = 0; i < attempts.length; i++) {
     try {
-      const ja = cleanJa(await attempts[i](q));
-      if (ja && ja !== korean.trim()) return ja;
+      const raw = await attempts[i](q, lang);
+      const out = lang === "ja" ? cleanJa(raw) : raw.replace(/\s+/g, " ").trim();
+      if (out && out !== korean.trim()) return out;
       last = new Error("빈 번역");
     } catch (error) {
       last = error;
@@ -88,19 +90,19 @@ export async function translateKoToJa(korean: string): Promise<string> {
   throw new Error(message);
 }
 
-/** Keyless Japanese (patient) → Korean via the public Google endpoints. No politify. */
-export async function translateJaToKo(japanese: string): Promise<string> {
-  const q = encodeURIComponent(japanese);
+/** Keyless patient language → Korean via the public Google endpoints. No politify. */
+export async function translateToKo(spoken: string, lang: PatientLang): Promise<string> {
+  const q = encodeURIComponent(spoken);
   const attempts = [
-    async () => parseGtx(await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl=ko&dt=t&dj=1&q=${q}`)),
-    async () => parseClients5(await getJson(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=ja&tl=ko&q=${q}`)),
-    async () => parseGtx(await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl=ko&dt=t&q=${q}`)),
+    async () => parseGtx(await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${lang}&tl=ko&dt=t&dj=1&q=${q}`)),
+    async () => parseClients5(await getJson(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${lang}&tl=ko&q=${q}`)),
+    async () => parseGtx(await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${lang}&tl=ko&dt=t&q=${q}`)),
   ];
   let last: unknown;
   for (let i = 0; i < attempts.length; i++) {
     try {
       const ko = (await attempts[i]()).replace(/\s+/g, " ").trim();
-      if (ko && ko !== japanese.trim()) return ko;
+      if (ko && ko !== spoken.trim()) return ko;
       last = new Error("빈 번역");
     } catch (error) {
       last = error;
@@ -127,4 +129,14 @@ export async function fetchJaRomaji(japanese: string): Promise<string> {
     }
   }
   throw last instanceof Error ? last : new Error("발음 표기를 찾지 못했습니다");
+}
+
+/** Latin transliteration of Arabic (last row of the response). Throws when Google has none. */
+export async function fetchArabicLatin(arabic: string): Promise<string> {
+  const q = encodeURIComponent(arabic);
+  const data = await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=ar&tl=en&dt=rm&dt=t&q=${q}`);
+  const rows = Array.isArray(data) && Array.isArray(data[0]) ? (data[0] as unknown[]) : [];
+  const last = rows[rows.length - 1];
+  if (Array.isArray(last) && typeof last[3] === "string") return last[3];
+  throw new Error("발음 표기를 찾지 못했습니다");
 }

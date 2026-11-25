@@ -450,11 +450,11 @@ h1 {
 }
 .mic-flag { font-size: 1.4rem; line-height: 1; }
 .mic-side-label small { display: block; font-size: 0.72rem; font-weight: 600; opacity: 0.9; margin-top: 2px; }
-.mic-ja { background: #8a4b12; color: #fff8ef; font-family: "Noto Sans JP", "Noto Sans KR", sans-serif; }
+.mic-patient { background: #8a4b12; color: #fff8ef; font-family: "Noto Sans JP", "Noto Sans KR", sans-serif; }
 .mic-pair .mic-side.is-live { background: var(--live); color: var(--live-ink); }
 .interim-lang { flex: none; font-size: 0.8rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #e7f4f1; color: var(--reading); }
 .interim-lang[hidden] { display: none; }
-.interim.is-ja .interim-lang { background: #fbe7d3; color: #8a4b12; }
+.interim.is-patient .interim-lang { background: #fbe7d3; color: #8a4b12; }
 .empty-ja { margin-top: 12px !important; font-family: "Noto Sans JP", sans-serif; font-weight: 700; color: #8a4b12; font-size: 1.02rem; }
 /* Patient (Japanese → Korean) cards */
 .card.is-patient { background: #fff4e8; border-left: 6px solid #c26a1e; padding-bottom: 16px; }
@@ -580,7 +580,7 @@ h1 { font-size: 1.2rem; color: var(--green); }
 }
 /* v2.4 readability: no mid-word Korean breaks, balanced big lines */
 .app { word-break: keep-all; overflow-wrap: break-word; }
-.ja, .ja-src, .reading, .empty-ja, .mic-ja { word-break: normal; overflow-wrap: anywhere; }
+.ja, .ja-src, .reading, .empty-ja, .mic-patient { word-break: normal; overflow-wrap: anywhere; }
 .ja, .ko-big { text-wrap: balance; }
 .phrases-panel { margin-bottom: 8px; }
 .presets { max-height: 21vh; max-height: 21dvh; }
@@ -593,3 +593,29 @@ h1 { font-size: 1.2rem; color: var(--green); }
 }
 .log { scroll-padding: 10px 0; }
 .log .card { min-height: calc(100% - 20px); }
+
+/* v2.5: patient language setting (Japanese / English / Arabic) */
+.lang-choice { display: flex; gap: 6px; margin: 4px 0 16px; padding: 4px; border-radius: 14px; background: #ece5d8; }
+.lang-choice button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 46px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: #4a4239;
+  font-weight: 700;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+.lang-choice button.is-on { background: var(--green); color: var(--green-ink); }
+.reading:empty { display: none; }
+/* English: whole words only. Arabic: joined letters need normal spacing and more line height. */
+.ja:lang(en), .ja-src:lang(en), .empty-ja:lang(en), .mic-patient:lang(en) { font-family: "Noto Sans KR", sans-serif; overflow-wrap: break-word; }
+.ja:lang(ar), .ja-src:lang(ar), .empty-ja:lang(ar), .mic-patient:lang(ar) {
+  font-family: "Noto Sans Arabic", "Geeza Pro", "Segoe UI", sans-serif;
+  letter-spacing: 0;
+  overflow-wrap: break-word;
+}
+.ja:lang(ar) { line-height: 1.55; text-align: start; }

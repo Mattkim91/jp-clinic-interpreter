@@ -1,19 +1,41 @@
+import { LANGS, type PatientLang } from "./lang";
 import { detectPlatform } from "./platform";
 
 let unlocked = false;
 let resumeHack = 0;
 
-export function japaneseVoices(): SpeechSynthesisVoice[] {
+const VOICE_LANG: Record<PatientLang, RegExp> = {
+  ja: /^ja/i,
+  en: /^(en|eng)([-_]|$)/i,
+  ar: /^(ar|ara)([-_]|$)/i,
+};
+
+export function voicesFor(lang: PatientLang): SpeechSynthesisVoice[] {
   const synth = window.speechSynthesis;
   if (!synth) return [];
-  return synth.getVoices().filter((voice) => voice.lang.toLowerCase().startsWith("ja"));
+  const list = synth.getVoices().filter((voice) => VOICE_LANG[lang].test(voice.lang));
+  if (lang !== "en") return list;
+  // Many English accents: list American ones first.
+  const us = (voice: SpeechSynthesisVoice) => (/^(en|eng)[-_]us/i.test(voice.lang) ? 0 : 1);
+  return list.sort((a, b) => us(a) - us(b));
 }
 
 export type VoiceGender = "female" | "male";
 const GENDER_KEY = "chiryo.voiceGender";
 
-const FEMALE = [/Kyoko/i, /O-?ren/i, /Google 日本語/, /Haruka/i, /Ayumi/i, /Nanami/i, /Mizuki/i, /Sayaka/i, /x-htm/i, /x-jab/i, /SMTf/i, /female/i, /女性/];
-const MALE = [/Otoya/i, /Hattori/i, /Ichiro/i, /Keita/i, /Takumi/i, /Daichi/i, /Naoki/i, /x-jac/i, /x-jad/i, /SMTm/i, /\bmale/i, /男性/];
+const FEMALE_JA = [/Kyoko/i, /O-?ren/i, /Google 日本語/, /Haruka/i, /Ayumi/i, /Nanami/i, /Mizuki/i, /Sayaka/i, /x-htm/i, /x-jab/i, /SMTf/i, /female/i, /女性/];
+const MALE_JA = [/Otoya/i, /Hattori/i, /Ichiro/i, /Keita/i, /Takumi/i, /Daichi/i, /Naoki/i, /x-jac/i, /x-jad/i, /SMTm/i, /\bmale/i, /男性/];
+
+const FEMALE: Record<PatientLang, RegExp[]> = {
+  ja: FEMALE_JA,
+  en: [/Samantha/i, /\bAva\b/i, /Allison/i, /Susan/i, /\bZoe\b/i, /Nicky/i, /Joelle/i, /Google US English/i, /Aria/i, /Jenny/i, /Zira/i, /Karen/i, /Moira/i, /Tessa/i, /SMTf/i, /female/i],
+  ar: [/Mariam/i, /Laila/i, /Hoda/i, /Salma/i, /Zariyah/i, /SMTf/i, /female/i],
+};
+const MALE: Record<PatientLang, RegExp[]> = {
+  ja: MALE_JA,
+  en: [/\bEvan\b/i, /Nathan/i, /\bAaron\b/i, /\bTom\b/i, /\bAlex\b/i, /Daniel/i, /\bDavid\b/i, /\bMark\b/i, /\bGuy\b/i, /Arthur/i, /Gordon/i, /Rishi/i, /SMTm/i, /\bmale/i],
+  ar: [/Majed/i, /Maged/i, /Tari[kq]/i, /Naayf/i, /Shakir/i, /Hamed/i, /SMTm/i, /\bmale/i],
+};
 
 export function getVoiceGender(): VoiceGender {
   try {
@@ -39,22 +61,23 @@ function matchFirst(voices: SpeechSynthesisVoice[], patterns: RegExp[], avoid: R
   return null;
 }
 
-function prefKey(gender: VoiceGender, what: "voice" | "pitch"): string {
-  return `chiryo.${what}.${gender}`;
+/** Japanese keeps its original key; other languages get their own. */
+function prefKey(gender: VoiceGender, what: "voice" | "pitch", lang: PatientLang = "ja"): string {
+  return lang === "ja" ? `chiryo.${what}.${gender}` : `chiryo.${what}.${lang}.${gender}`;
 }
 
 /** Voice name the user picked for this gender ("" = automatic). */
-export function getChosenVoice(gender: VoiceGender): string {
+export function getChosenVoice(gender: VoiceGender, lang: PatientLang = "ja"): string {
   try {
-    return localStorage.getItem(prefKey(gender, "voice")) ?? "";
+    return localStorage.getItem(prefKey(gender, "voice", lang)) ?? "";
   } catch {
     return "";
   }
 }
 
-export function setChosenVoice(gender: VoiceGender, name: string): void {
+export function setChosenVoice(gender: VoiceGender, name: string, lang: PatientLang = "ja"): void {
   try {
-    localStorage.setItem(prefKey(gender, "voice"), name);
+    localStorage.setItem(prefKey(gender, "voice", lang), name);
   } catch {
     /* storage blocked */
   }
@@ -80,18 +103,19 @@ export function setChosenPitch(gender: VoiceGender, pitch: number): void {
 }
 
 /** Voice + pitch actually used for the current gender setting. */
-export function resolveVoice(gender: VoiceGender = getVoiceGender()): { voice: SpeechSynthesisVoice | null; pitch: number; exact: boolean } {
-  const chosenName = getChosenVoice(gender);
-  const chosen = chosenName ? japaneseVoices().find((voice) => voice.name === chosenName) ?? null : null;
-  const picked = chosen ? { voice: chosen, exact: true } : pickJapaneseVoice(gender);
+export function resolveVoice(gender: VoiceGender = getVoiceGender(), lang: PatientLang = "ja"): { voice: SpeechSynthesisVoice | null; pitch: number; exact: boolean } {
+  const chosenName = getChosenVoice(gender, lang);
+  const chosen = chosenName ? voicesFor(lang).find((voice) => voice.name === chosenName) ?? null : null;
+  const picked = chosen ? { voice: chosen, exact: true } : pickVoice(gender, lang);
   const pitch = (picked.exact ? 1 : gender === "male" ? 0.6 : 1.25);
   return { ...picked, pitch };
 }
 
-/** Pick a Japanese voice of the wanted gender; `exact` is false when we had to fall back to another voice. */
-export function pickJapaneseVoice(gender: VoiceGender = getVoiceGender()): { voice: SpeechSynthesisVoice | null; exact: boolean } {
-  const voices = japaneseVoices();
-  const wanted = gender === "male" ? matchFirst(voices, MALE, FEMALE) : matchFirst(voices, FEMALE, MALE);
+/** Pick a voice of the wanted gender; `exact` is false when we had to fall back to another voice. */
+export function pickVoice(gender: VoiceGender = getVoiceGender(), lang: PatientLang = "ja"): { voice: SpeechSynthesisVoice | null; exact: boolean } {
+  const voices = voicesFor(lang);
+  const wanted =
+    gender === "male" ? matchFirst(voices, MALE[lang], FEMALE[lang]) : matchFirst(voices, FEMALE[lang], MALE[lang]);
   if (wanted) return { voice: wanted, exact: true };
   // No clearly-named voice: leave the voice unset so the phone's own default
   // (e.g. Samsung TTS "음성 1") speaks. Most default Japanese voices are female.
@@ -142,7 +166,7 @@ export function primeVoices(): void {
   let tries = 0;
   const timer = window.setInterval(() => {
     pull();
-    if (japaneseVoices().length || ++tries > 24) window.clearInterval(timer);
+    if (voicesFor("ja").length || ++tries > 24) window.clearInterval(timer);
   }, 250);
 }
 
@@ -158,16 +182,22 @@ export function unlockSpeech(): void {
   synth.speak(primer);
 }
 
-export function speakJapanese(text: string): boolean {
+/** True when the phone lists voices but none for this language (sound may not come out). */
+export function voiceMissing(lang: PatientLang): boolean {
+  const all = window.speechSynthesis?.getVoices() ?? [];
+  return all.length > 0 && voicesFor(lang).length === 0;
+}
+
+export function speakText(text: string, lang: PatientLang): boolean {
   const synth = window.speechSynthesis;
   if (!synth || !text.trim()) return false;
   unlocked = true;
   if (synth.paused) synth.resume();
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = "ja-JP";
+  utterance.lang = LANGS[lang].tag;
   utterance.rate = getSpeechRate();
   const gender = getVoiceGender();
-  const { voice, pitch } = resolveVoice(gender);
+  const { voice, pitch } = resolveVoice(gender, lang);
   utterance.pitch = pitch;
   if (voice) utterance.voice = voice;
   if (synth.speaking) synth.cancel();

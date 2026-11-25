@@ -71,21 +71,27 @@ export const PRESETS: Preset[] = [
 ];
 
 const EXACT = new Map<string, string>();
+/** Same spellings as EXACT, pointing at the preset's Korean line (used for other languages). */
+export const EXACT_KEYS = new Map<string, string>();
 for (const preset of PRESETS) {
   EXACT.set(normalize(preset.ko), preset.ja);
   EXACT.set(normalize(preset.ko).replace(/ /g, ""), preset.ja);
   EXACT.set(stripPunct(preset.ko), preset.ja);
+  EXACT_KEYS.set(normalize(preset.ko), preset.ko);
+  EXACT_KEYS.set(normalize(preset.ko).replace(/ /g, ""), preset.ko);
+  EXACT_KEYS.set(stripPunct(preset.ko), preset.ko);
 }
 
-const PATTERNS: { re: RegExp; ja: string }[] = [
-  { re: /들이쉬고\s*.*내쉬|들이마시고\s*.*내쉬|들이쉬고\s*.*뱉|깊게\s*들이쉬/, ja: "深く息を吸って吐いてください" },
-  { re: /숨\s*참|숨을\s*참|숨\s*멈추|숨을\s*멈추/, ja: "息を止めてください" },
-  { re: /숨\s*(을\s*)?(크게|깊이)|크게\s*숨|깊이\s*숨/, ja: "息を大きく吸ってください" },
-  { re: /엉덩이.{0,8}(들어|올려)/, ja: "お尻を上げてください" },
-  { re: /(배|복부).{0,6}힘.{0,6}(주|넣)/, ja: "お腹に力を入れてください" },
-  { re: /어깨.{0,6}힘.{0,6}빼/, ja: "肩の力を抜いてください" },
-  { re: /허리.{0,8}(숙|앞으로\s*굽)/, ja: "腰を前に曲げてください" },
-  { re: /돌아\s*눕|돌아눕/, ja: "反対側に向かって横になってください" },
+/** `key` names the matching line in phrases.ts for the other patient languages. */
+export const PATTERNS: { re: RegExp; ja: string; key: string }[] = [
+  { re: /들이쉬고\s*.*내쉬|들이마시고\s*.*내쉬|들이쉬고\s*.*뱉|깊게\s*들이쉬/, ja: "深く息を吸って吐いてください", key: "깊게 들이쉬고 내쉬세요" },
+  { re: /숨\s*참|숨을\s*참|숨\s*멈추|숨을\s*멈추/, ja: "息を止めてください", key: "숨을 참으세요" },
+  { re: /숨\s*(을\s*)?(크게|깊이)|크게\s*숨|깊이\s*숨/, ja: "息を大きく吸ってください", key: "숨 크게 쉬세요" },
+  { re: /엉덩이.{0,8}(들어|올려)/, ja: "お尻を上げてください", key: "엉덩이 들어보세요" },
+  { re: /(배|복부).{0,6}힘.{0,6}(주|넣)/, ja: "お腹に力を入れてください", key: "배에 힘을 주세요" },
+  { re: /어깨.{0,6}힘.{0,6}빼/, ja: "肩の力を抜いてください", key: "어깨에 힘을 빼세요" },
+  { re: /허리.{0,8}(숙|앞으로\s*굽)/, ja: "腰を前に曲げてください", key: "허리를 숙이세요" },
+  { re: /돌아\s*눕|돌아눕/, ja: "反対側に向かって横になってください", key: "반대쪽으로 돌아누우세요" },
 ];
 
 const BODY =
@@ -97,7 +103,7 @@ export type Prepared = {
   overrideJa?: string;
 };
 
-function stripPunct(input: string): string {
+export function stripPunct(input: string): string {
   return input.replace(/[\s.,?!~。、？！]/g, "");
 }
 
@@ -113,7 +119,7 @@ function eulReul(noun: string): "을" | "를" {
 
 /** Korean sent to the translator, with homonyms nudged toward the rehab sense. */
 export function rewriteQuery(korean: string): string {
-  const text = normalize(korean);
+  const text = isNegated(korean) ? clarifyNegated(normalize(korean)) : normalize(korean);
   const lift = new RegExp(`(${BODY})(을|를)?\\s*들어\\s*(?:보세요|주세요|주십시오|보시오)`);
   const found = text.match(lift);
   if (found && !/들어\s*올리/.test(text)) {
@@ -123,12 +129,50 @@ export function rewriteQuery(korean: string): string {
   return text;
 }
 
+/** "~지 마세요", "~지 말고", "~면 안 돼요": must never be swapped for the positive command. */
+export function isNegated(korean: string): boolean {
+  return /지\s*(는|도|를)?\s*(마세|마셔|마시|마십|마요|마라|마$|마[\s.,!?]|말|않|못)|면\s*안\s*(돼|되|됩|된)/.test(normalize(korean));
+}
+
+/** Optional lead-in and "don't" ending; anything longer goes to the translator so no clause is lost. */
+const NOT_START = "^(?:절대로?\\s*|아직\\s*|지금은?\\s*|이제\\s*)?";
+const NOT_END =
+  "(?:지\\s*(?:는|도|를)?\\s*(?:마세요|마셔요|마십시오|마요|마|말아\\s*주세요|말아요)|으?면\\s*안\\s*(?:돼요|되요|됩니다|돼))[\\s.!?]*$";
+
+function dont(body: string): RegExp {
+  return new RegExp(NOT_START + body + NOT_END);
+}
+
+/** Fixed "don't" lines: the keyless translator turns 숨 참지 마세요 into "don't breathe" and 배 into a boat. */
+export const NEGATIVE_PATTERNS: { re: RegExp; ja: string; key: string }[] = [
+  { re: dont("(?:숨|호흡)(?:을|은)?\\s*(?:참|멈추)"), ja: "息を止めないでください", key: "숨을 참지 마세요" },
+  {
+    re: /^(?:숨|호흡)(?:을|은)?\s*(?:참|멈추)지\s*말고\s*(?:편하게|편안하게|천천히|계속)?\s*(?:숨(?:을)?\s*)?(?:쉬세요|쉬어\s*보세요|쉬어\s*주세요|호흡하세요)[\s.!]*$/,
+    ja: "息を止めないで、楽に呼吸してください",
+    key: "숨을 참지 말고 편하게 쉬세요",
+  },
+  { re: dont("엉덩이(?:를|는)?\\s*(?:들|들어\\s*올리|올리)"), ja: "お尻を上げないでください", key: "엉덩이를 들지 마세요" },
+  { re: dont("(?:배|복부)에?\\s*힘(?:을|은)?\\s*(?:주|넣)"), ja: "お腹に力を入れないでください", key: "배에 힘을 주지 마세요" },
+  { re: dont("어깨에?\\s*힘(?:을|은)?\\s*빼"), ja: "肩の力を抜かないでください", key: "어깨에 힘을 빼지 마세요" },
+  { re: dont("허리(?:를|는)?\\s*(?:앞으로\\s*)?(?:숙이|굽히)"), ja: "腰を前に曲げないでください", key: "허리를 숙이지 마세요" },
+  { re: dont("(?:옆으로\\s*)?돌아\\s*눕"), ja: "横向きにならないでください", key: "돌아눕지 마세요" },
+];
+
+/** Spell out words the keyless translator misreads in "don't" sentences. */
+function clarifyNegated(korean: string): string {
+  return korean
+    .replace(/숨(을|은)?\s*참지/g, "호흡을 멈추지")
+    .replace(/숨(을|은)?\s*참으면/g, "호흡을 멈추면")
+    .replace(/(^|\s)배에\s*힘/g, "$1복부에 힘")
+    .replace(/돌아\s*눕지/g, "옆으로 돌아서 눕지");
+}
+
 export function prepare(input: string): Prepared {
   const original = normalize(input);
   const compact = original.replace(/ /g, "");
   const exact = EXACT.get(original) ?? EXACT.get(compact) ?? EXACT.get(stripPunct(original));
   if (exact) return { original, query: original, overrideJa: exact };
-  for (const pattern of PATTERNS) {
+  for (const pattern of isNegated(original) ? NEGATIVE_PATTERNS : PATTERNS) {
     if (pattern.re.test(original) || pattern.re.test(compact)) {
       return { original, query: original, overrideJa: pattern.ja };
     }

@@ -1,21 +1,27 @@
+import { arabicLatinToHangul } from "./arabic";
 import { romajiToHangul } from "./hangul";
+import { LANG_ORDER, LANGS, isPatientLang, loadPatientLang, savePatientLang, type PatientLang } from "./lang";
+import { fixedPhrase } from "./phrases";
 import { detectPlatform, type PlatformInfo } from "./platform";
 import { politify } from "./polite";
-import { PRESET_GROUPS, PRESETS, prepare } from "./prepare";
+import { PRESET_GROUPS, PRESETS, prepare, rewriteQuery } from "./prepare";
 import { hangulFromTokens } from "./reading";
-import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, japaneseVoices, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakJapanese, unlockSpeech, type VoiceGender } from "./speak";
+import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakText, unlockSpeech, voiceMissing, voicesFor, type VoiceGender } from "./speak";
 import { createListener, type ListenState, type SpeechLang } from "./speech";
-import { fetchJaRomaji, translateJaToKo, translateKoToJa } from "./translate";
-import { getGeminiKey, setGeminiKey, translateJaToKoWithGemini, translateWithGemini } from "./gemini";
+import { fetchArabicLatin, fetchJaRomaji, translateFromKo, translateToKo } from "./translate";
+import { getGeminiKey, setGeminiKey, translateToKoWithGemini, translateToWithGemini, translateWithGemini } from "./gemini";
 import { loadTokenizer, type Tokenizer } from "./tokenizer";
 import { createWake, type WakeMode } from "./wake";
 
 type Card = {
   id: number;
-  /** "therapist": Korean → Japanese (default). "patient": Japanese → Korean. */
+  /** "therapist": Korean → patient language (default). "patient": patient language → Korean. */
   speaker: "therapist" | "patient";
+  /** Patient language this card was made in (kept when the setting changes later). */
+  lang: PatientLang;
   ko: string;
-  ja: string;
+  /** The patient-language side. */
+  text: string;
   reading: string;
   status: "loading" | "ready" | "error";
   error: string;
@@ -45,19 +51,26 @@ function loadMode(): Mode {
   }
 }
 let mode: Mode = loadMode();
+let patientLang: PatientLang = loadPatientLang();
 /** Language the recognizer is (or was last) listening in. */
 let hearLang: SpeechLang = "ko";
 
-const dictReady = loadTokenizer(`${import.meta.env.BASE_URL}kuromoji-dict`)
-  .then((built) => {
-    tokenizer = built;
-  })
-  .catch(() => {
-    dictError = "발음 사전을 받지 못했습니다. 로마자 발음으로 대신합니다.";
-  })
-  .finally(() => {
-    if (document.getElementById("status")) renderChrome();
-  });
+let dictPromise: Promise<void> | null = null;
+/** Japanese reading dictionary (18MB): only fetched once Japanese is used. */
+function loadDict(): Promise<void> {
+  dictPromise ??= loadTokenizer(`${import.meta.env.BASE_URL}kuromoji-dict`)
+    .then((built) => {
+      tokenizer = built;
+    })
+    .catch(() => {
+      dictError = "발음 사전을 받지 못했습니다. 로마자 발음으로 대신합니다.";
+    })
+    .finally(() => {
+      if (document.getElementById("status")) renderChrome();
+    });
+  return dictPromise;
+}
+if (patientLang === "ja") void loadDict();
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (ch) => {
@@ -74,7 +87,7 @@ function friendlyError(error: unknown): string {
 }
 
 async function readingFor(ja: string): Promise<string> {
-  await dictReady;
+  await loadDict();
   if (tokenizer) {
     const hangul = hangulFromTokens(tokenizer.tokenize(ja));
     if (hangul) return hangul;
@@ -90,12 +103,12 @@ async function fillPatient(card: Card): Promise<void> {
     let ko = "";
     if (getGeminiKey()) {
       try {
-        ko = await translateJaToKoWithGemini(card.ja);
+        ko = await translateToKoWithGemini(card.text, card.lang);
       } catch {
         ko = "";
       }
     }
-    if (!ko) ko = await translateJaToKo(card.ja);
+    if (!ko) ko = await translateToKo(card.text, card.lang);
     card.ko = ko;
     card.status = "ready";
     card.error = "";
@@ -107,18 +120,56 @@ async function fillPatient(card: Card): Promise<void> {
   scrollLog();
 }
 
-function submitPatient(japanese: string): void {
-  const ja = japanese.replace(/\s+/g, " ").trim();
-  if (!ja) return;
-  const card: Card = { id: nextId++, speaker: "patient", ko: "", ja, reading: "", status: "loading", error: "" };
+function submitPatient(spoken: string, lang: PatientLang = patientLang): void {
+  const text = spoken.replace(/\s+/g, " ").trim();
+  if (!text) return;
+  const card: Card = { id: nextId++, speaker: "patient", lang, ko: "", text, reading: "", status: "loading", error: "" };
   cards.push(card);
   render();
   scrollLog();
   void fillPatient(card);
 }
 
+/** Korean → English/Arabic: fixed phrase, then Gemini, then Google. The reading may follow later. */
+async function fillOther(card: Card, lang: "en" | "ar"): Promise<void> {
+  try {
+    const fixed = fixedPhrase(card.ko, lang);
+    let text = fixed?.text ?? "";
+    let reading = fixed?.reading ?? "";
+    if (!text && getGeminiKey()) {
+      try {
+        ({ text, reading } = await translateToWithGemini(card.ko, lang));
+      } catch {
+        text = "";
+      }
+    }
+    if (!text) text = await translateFromKo(rewriteQuery(card.ko), lang);
+    card.text = text;
+    card.reading = reading;
+    card.status = "ready";
+    card.error = "";
+    if (autoSpeak) speakText(text, lang);
+  } catch (error) {
+    card.status = "error";
+    card.error = friendlyError(error);
+  }
+  render();
+  scrollLog();
+  if (card.status !== "ready" || card.reading || lang !== "ar") return;
+  try {
+    const reading = arabicLatinToHangul(await fetchArabicLatin(card.text));
+    if (!reading) return;
+    card.reading = reading;
+    const line = document.querySelector<HTMLElement>(`[data-card="${card.id}"] .reading`);
+    if (line) line.textContent = reading;
+  } catch {
+    /* the translation is still usable without a reading */
+  }
+}
+
 async function fill(card: Card): Promise<void> {
   if (card.speaker === "patient") return fillPatient(card);
+  if (card.lang !== "ja") return fillOther(card, card.lang);
   try {
     const prepared = prepare(card.ko);
     let translated = prepared.overrideJa ?? "";
@@ -129,14 +180,14 @@ async function fill(card: Card): Promise<void> {
         translated = "";
       }
     }
-    if (!translated) translated = await translateKoToJa(prepared.query);
+    if (!translated) translated = await translateFromKo(prepared.query, "ja");
     const ja = prepared.overrideJa ? translated : politify(translated, card.ko);
     const reading = await readingFor(ja);
-    card.ja = ja;
+    card.text = ja;
     card.reading = reading;
     card.status = "ready";
     card.error = "";
-    if (autoSpeak) speakJapanese(ja);
+    if (autoSpeak) speakText(ja, "ja");
   } catch (error) {
     card.status = "error";
     card.error = friendlyError(error);
@@ -148,7 +199,7 @@ async function fill(card: Card): Promise<void> {
 function submit(korean: string): void {
   const ko = korean.replace(/\s+/g, " ").trim();
   if (!ko) return;
-  const card: Card = { id: nextId++, speaker: "therapist", ko, ja: "", reading: "", status: "loading", error: "" };
+  const card: Card = { id: nextId++, speaker: "therapist", lang: patientLang, ko, text: "", reading: "", status: "loading", error: "" };
   cards.push(card);
   render();
   scrollLog();
@@ -166,12 +217,15 @@ function retry(id: number): void {
 
 function speakCard(id: number): void {
   const card = cards.find((item) => item.id === id);
-  if (!card || card.speaker === "patient" || card.status !== "ready" || !card.ja) return;
+  if (!card || card.speaker === "patient" || card.status !== "ready" || !card.text) return;
   if (!canSpeak()) {
-    setToast("이 브라우저는 일본어 소리 내기를 지원하지 않습니다.");
+    setToast(`이 브라우저는 ${LANGS[card.lang].name} 소리 내기를 지원하지 않습니다.`);
     return;
   }
-  speakJapanese(card.ja);
+  if (card.lang !== "ja" && voiceMissing(card.lang)) {
+    setToast(`이 폰에 ${LANGS[card.lang].name} 음성이 없어 소리가 안 날 수 있습니다. 폰의 글자 읽어주기 설정에서 받아 주세요.`);
+  }
+  speakText(card.text, card.lang);
 }
 
 function scrollLog(): void {
@@ -182,7 +236,7 @@ function scrollLog(): void {
 }
 
 function langName(lang: SpeechLang): string {
-  return lang === "ja" ? "환자 일본어" : "한국어";
+  return lang === "ko" ? "한국어" : `환자 ${LANGS[lang].name}`;
 }
 
 function statusText(): string {
@@ -190,8 +244,8 @@ function statusText(): string {
   if (listening === "needs-gesture") return "마이크를 다시 눌러 주세요";
   if (listening === "denied") return "마이크 권한이 필요합니다";
   if (listening === "unsupported") return "음성 인식 없음";
-  if (!tokenizer && !dictError) return "발음 사전 받는 중";
-  return "대기";
+  if (patientLang === "ja" && !tokenizer && !dictError) return "발음 사전 받는 중";
+  return `대기 · ${LANGS[patientLang].name}`;
 }
 
 function hintText(): string {
@@ -202,15 +256,15 @@ function hintText(): string {
     return "화면이 꺼지면 자동 잠금을 꺼 주세요. 문장마다 이어서 듣습니다.";
   }
   if (listening === "listening" && mode === "two") {
-    return hearLang === "ja"
-      ? "환자 일본어를 듣는 중. 내 차례면 ‘내가 말하기’를 누르세요."
-      : "한국어를 듣는 중. 환자 차례면 ‘患者さん’ 버튼을 누르세요.";
+    return hearLang !== "ko"
+      ? `환자 ${LANGS[hearLang].name}를 듣는 중. 내 차례면 ‘내가 말하기’를 누르세요.`
+      : "한국어를 듣는 중. 환자 차례면 환자 버튼을 누르세요.";
   }
   if (listening === "listening") return "문장이 끝나면 바로 번역됩니다. 화면은 켜 둔 상태입니다.";
   if (platform.kind === "ios") return "아이폰은 문장마다 다시 듣습니다. 멈추면 마이크를 다시 누르세요.";
-  if (dictError) return dictError;
+  if (dictError && patientLang === "ja") return dictError;
   if (mode === "two") return "말하는 사람 버튼을 누르세요. 다시 누르면 멈춥니다.";
-  return "말하면 일본어 카드가 쌓입니다.";
+  return `말하면 ${LANGS[patientLang].name} 카드가 쌓입니다.`;
 }
 
 function installLine(): string {
@@ -236,11 +290,12 @@ function renderChrome(): void {
   hint.textContent = hintText();
   interimText.textContent = interim;
   interimEl.hidden = !interim;
-  interimEl.classList.toggle("is-ja", mode === "two" && hearLang === "ja");
+  interimEl.classList.toggle("is-patient", mode === "two" && hearLang !== "ko");
+  interimText.dir = hearLang === "ko" ? "ltr" : LANGS[hearLang].dir;
   const interimLang = document.querySelector<HTMLElement>("#interim-lang");
   if (interimLang) {
     interimLang.hidden = mode !== "two";
-    interimLang.textContent = hearLang === "ja" ? "🇯🇵 환자" : "🇰🇷 나";
+    interimLang.textContent = hearLang === "ko" ? "🇰🇷 나" : `${LANGS[hearLang].flag} 환자`;
   }
 
   const live = listening === "listening";
@@ -251,15 +306,24 @@ function renderChrome(): void {
   const pair = document.querySelector<HTMLElement>("#mic-pair");
   mic.hidden = mode === "two";
   if (pair) pair.hidden = mode !== "two";
-  for (const lang of ["ko", "ja"] as const) {
-    const button = document.querySelector<HTMLButtonElement>(`#mic-${lang}`);
-    const label = document.querySelector<HTMLElement>(`#mic-${lang}-label`);
+  const info = LANGS[patientLang];
+  for (const side of ["ko", "patient"] as const) {
+    const button = document.querySelector<HTMLButtonElement>(`#mic-${side}`);
+    const label = document.querySelector<HTMLElement>(`#mic-${side}-label`);
     if (!button || !label) continue;
-    const on = live && hearLang === lang;
+    const on = live && (side === "ko") === (hearLang === "ko");
     button.classList.toggle("is-live", on);
     button.setAttribute("aria-pressed", on ? "true" : "false");
-    if (lang === "ko") label.innerHTML = on ? "듣는 중<small>누르면 멈춤</small>" : "내가 말하기";
-    else label.innerHTML = on ? "聞いています<small>(환자 듣는 중 · 누르면 멈춤)</small>" : "患者さん 話す<small>(환자)</small>";
+    if (side === "ko") {
+      label.innerHTML = on ? "듣는 중<small>누르면 멈춤</small>" : "내가 말하기";
+      continue;
+    }
+    button.lang = patientLang;
+    const flag = document.querySelector<HTMLElement>("#mic-patient-flag");
+    if (flag) flag.textContent = info.flag;
+    label.innerHTML = on
+      ? `<bdi>${info.listening}</bdi><small>(환자 듣는 중 · 누르면 멈춤)</small>`
+      : `<bdi>${info.patientButton}</bdi><small>(환자)</small>`;
   }
   for (const button of document.querySelectorAll<HTMLButtonElement>("#mode [data-mode]")) {
     const on = button.dataset.mode === mode;
@@ -285,26 +349,29 @@ function renderChrome(): void {
 function renderCards(): void {
   const log = document.querySelector<HTMLElement>("#log");
   if (!log) return;
+  const info = LANGS[patientLang];
   if (!cards.length) {
     log.innerHTML =
       mode === "two"
-        ? `<div class="empty"><p class="empty-title">양방향 통역</p><p>내가 말할 때는 <b>🇰🇷 내가 말하기</b>, 환자가 말할 때는 <b>🇯🇵 患者さん</b> 버튼을 누르세요. 환자 말은 한국어로 크게 보여 줍니다.</p><p class="empty-ja" lang="ja">日本語で話すときは「患者さん」ボタンを押してください</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`
-        : `<div class="empty"><p class="empty-title">아직 문장이 없습니다</p><p>마이크를 누르고 환자에게 할 말을 한국어로 하세요. 한 문장이 끝나면 일본어가 큰 글씨로 쌓입니다.</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`;
+        ? `<div class="empty"><p class="empty-title">양방향 통역</p><p>내가 말할 때는 <b>🇰🇷 내가 말하기</b>, 환자가 말할 때는 <b>${info.flag} <bdi>${info.patientButton}</bdi></b> 버튼을 누르세요. 환자 말은 한국어로 크게 보여 줍니다.</p><p class="empty-ja" lang="${patientLang}" dir="${info.dir}">${info.invite}</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`
+        : `<div class="empty"><p class="empty-title">아직 문장이 없습니다</p><p>마이크를 누르고 환자에게 할 말을 한국어로 하세요. 한 문장이 끝나면 ${info.name}가 큰 글씨로 쌓입니다.</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`;
     return;
   }
 
   log.innerHTML = cards
     .map((card, index) => {
       const newest = index === cards.length - 1 ? " is-newest" : "";
+      const { name, flag, dir } = LANGS[card.lang];
+      const src = `<p class="ja-src" lang="${card.lang}" dir="${dir}">${escapeHtml(card.text)}</p>`;
       if (card.speaker === "patient") {
-        const label = `<p class="who">🇯🇵 환자</p>`;
+        const label = `<p class="who">${flag} 환자</p>`;
         if (card.status === "loading") {
-          return `<article class="card is-patient is-loading${newest}" data-card="${card.id}">${label}<p class="ko-big ja-wait">번역하는 중…</p><p class="ja-src" lang="ja">${escapeHtml(card.ja)}</p></article>`;
+          return `<article class="card is-patient is-loading${newest}" data-card="${card.id}">${label}<p class="ko-big ja-wait">번역하는 중…</p>${src}</article>`;
         }
         if (card.status === "error") {
-          return `<article class="card is-patient is-error${newest}" data-card="${card.id}">${label}<p class="ko-big ja-wait">번역되지 않았습니다</p><p class="error-text">${escapeHtml(card.error)}</p><p class="ja-src" lang="ja">${escapeHtml(card.ja)}</p><button type="button" class="retry" data-retry="${card.id}">다시 번역</button></article>`;
+          return `<article class="card is-patient is-error${newest}" data-card="${card.id}">${label}<p class="ko-big ja-wait">번역되지 않았습니다</p><p class="error-text">${escapeHtml(card.error)}</p>${src}<button type="button" class="retry" data-retry="${card.id}">다시 번역</button></article>`;
         }
-        return `<article class="card is-patient${newest}" data-card="${card.id}">${label}<p class="ko-big">${escapeHtml(card.ko)}</p><p class="ja-src" lang="ja">${escapeHtml(card.ja)}</p></article>`;
+        return `<article class="card is-patient${newest}" data-card="${card.id}">${label}<p class="ko-big">${escapeHtml(card.ko)}</p>${src}</article>`;
       }
       if (card.status === "loading") {
         return `<article class="card is-loading${newest}" data-card="${card.id}"><p class="ja ja-wait">번역하는 중…</p><p class="ko">${escapeHtml(card.ko)}</p></article>`;
@@ -313,10 +380,10 @@ function renderCards(): void {
         return `<article class="card is-error${newest}" data-card="${card.id}"><p class="ja ja-wait">번역되지 않았습니다</p><p class="error-text">${escapeHtml(card.error)}</p><p class="ko">${escapeHtml(card.ko)}</p><button type="button" class="retry" data-retry="${card.id}">다시 번역</button></article>`;
       }
       return `<article class="card${newest}" data-card="${card.id}">
-        <button type="button" class="speak" data-speak="${card.id}" aria-label="일본어로 읽기">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2L12 18.8V5.2L7.2 9.5H4z" fill="currentColor"/><path d="M15.2 8.2a5 5 0 0 1 0 7.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M17.6 5.8a8 8 0 0 1 0 12.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>일본어로 읽기</span>
+        <button type="button" class="speak" data-speak="${card.id}" aria-label="${name}로 읽기">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2L12 18.8V5.2L7.2 9.5H4z" fill="currentColor"/><path d="M15.2 8.2a5 5 0 0 1 0 7.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M17.6 5.8a8 8 0 0 1 0 12.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>${name}로 읽기</span>
         </button>
-        <p class="ja" lang="ja">${escapeHtml(card.ja)}</p>
+        <p class="ja" lang="${card.lang}" dir="${dir}">${escapeHtml(card.text)}</p>
         <p class="reading">${escapeHtml(card.reading)}</p>
         <p class="ko">${escapeHtml(card.ko)}</p>
       </article>`;
@@ -339,7 +406,7 @@ export function startApp(): void {
   const video = document.querySelector<HTMLVideoElement>("#nosleep");
   const wake = video ? createWake(video) : null;
   const listener = createListener({
-    onFinal: (text, lang) => (lang === "ja" ? submitPatient(text) : submit(text)),
+    onFinal: (text, lang) => (lang === "ko" ? submit(text) : submitPatient(text, lang)),
     onInterim: (text) => {
       interim = text;
       renderChrome();
@@ -441,7 +508,7 @@ export function startApp(): void {
 
   document.querySelector<HTMLButtonElement>("#mic")?.addEventListener("click", () => toggleMic("ko"));
   document.querySelector<HTMLButtonElement>("#mic-ko")?.addEventListener("click", () => toggleMic("ko"));
-  document.querySelector<HTMLButtonElement>("#mic-ja")?.addEventListener("click", () => toggleMic("ja"));
+  document.querySelector<HTMLButtonElement>("#mic-patient")?.addEventListener("click", () => toggleMic(patientLang));
 
   document.querySelector<HTMLElement>("#mode")?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-mode]");
@@ -453,12 +520,23 @@ export function startApp(): void {
     } catch {
       /* storage blocked */
     }
-    // One-way only listens in Korean: stop a patient (Japanese) session when leaving two-way.
-    if (mode === "one" && listening === "listening" && hearLang === "ja") stopListening();
+    // One-way only listens in Korean: stop a patient session when leaving two-way.
+    if (mode === "one" && listening === "listening" && hearLang !== "ko") stopListening();
     render();
   });
 
-  setupSettings();
+  /** Switch the patient language. Existing cards keep the language they were made in. */
+  const changeLang = (next: PatientLang) => {
+    if (next === patientLang) return;
+    // A patient session in the old language must not keep listening.
+    if (listening === "listening" && hearLang !== "ko") stopListening();
+    patientLang = next;
+    savePatientLang(next);
+    if (next === "ja") void loadDict();
+    render();
+    scrollLog();
+  };
+  setupSettings(changeLang);
   const clear = document.querySelector<HTMLButtonElement>("#clear");
   clear?.addEventListener("click", () => {
     if (!cards.length) return;
@@ -493,8 +571,9 @@ export function startApp(): void {
       mode = next;
       render();
     },
+    setLang: changeLang,
     cards: () => cards.map((card) => ({ ...card })),
-    dictReady: () => dictReady.then(() => Boolean(tokenizer)),
+    dictReady: () => loadDict().then(() => Boolean(tokenizer)),
   };
 
   document.fonts?.ready.then(() => {
@@ -508,6 +587,7 @@ declare global {
     __clinic?: {
       submit: (text: string) => void;
       submitPatient: (text: string) => void;
+      setLang: (lang: PatientLang) => void;
       setMode: (mode: "one" | "two") => void;
       cards: () => Card[];
       dictReady: () => Promise<boolean>;
@@ -516,7 +596,7 @@ declare global {
 }
 
 
-function setupSettings(): void {
+function setupSettings(changeLang: (lang: PatientLang) => void): void {
   const dialog = document.querySelector<HTMLDialogElement>("#settings");
   const open = document.querySelector<HTMLButtonElement>("#open-settings");
   const input = document.querySelector<HTMLInputElement>("#gemini-key");
@@ -535,24 +615,44 @@ function setupSettings(): void {
   const radios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="voice-gender"]'));
   const voiceSelect = document.querySelector<HTMLSelectElement>("#voice-select");
   const testVoice = document.querySelector<HTMLButtonElement>("#test-voice");
-  const sample = () => speakJapanese("こんにちは。お尻を上げてください。");
+  const sample = () => speakText(LANGS[patientLang].sample, patientLang);
+  const langButtons = document.querySelector<HTMLElement>("#lang-choice");
+  const showLang = () => {
+    if (!langButtons) return;
+    langButtons.innerHTML = LANG_ORDER.map((lang) => {
+      const on = lang === patientLang;
+      return `<button type="button" role="radio" data-lang="${lang}" aria-checked="${on}" class="${on ? "is-on" : ""}">${LANGS[lang].flag} ${LANGS[lang].name}</button>`;
+    }).join("");
+  };
   const showVoice = () => {
     const gender = getVoiceGender();
     for (const radio of radios) radio.checked = radio.value === gender;
-    const { voice, exact } = resolveVoice(gender);
+    const { voice, exact } = resolveVoice(gender, patientLang);
+    const voices = voicesFor(patientLang);
+    const { name } = LANGS[patientLang];
     if (voiceSelect) {
-      const chosen = getChosenVoice(gender);
+      const chosen = getChosenVoice(gender, patientLang);
       voiceSelect.replaceChildren(new Option("폰 기본 목소리 (자동)", ""));
-      for (const v of japaneseVoices()) voiceSelect.add(new Option(v.name, v.name));
-      voiceSelect.value = chosen && japaneseVoices().some((v) => v.name === chosen) ? chosen : "";
+      for (const v of voices) voiceSelect.add(new Option(v.name, v.name));
+      voiceSelect.value = chosen && voices.some((v) => v.name === chosen) ? chosen : "";
     }
     if (!voiceNote) return;
-    const count = japaneseVoices().length;
+    const count = voices.length;
     voiceNote.textContent = voice
-      ? `사용 중: ${voice.name} · 이 폰의 일본어 음성 ${count}개` +
+      ? `사용 중: ${voice.name} · 이 폰의 ${name} 음성 ${count}개` +
         (!exact ? " (맞는 성별 음성이 없어 음높이로 조절)" : "")
-      : `사용 중: 폰 기본 일본어 목소리 · 이 폰의 일본어 음성 ${count}개`;
+      : `사용 중: 폰 기본 ${name} 목소리 · 이 폰의 ${name} 음성 ${count}개`;
+    if (patientLang !== "ja" && voiceMissing(patientLang)) {
+      voiceNote.textContent = `이 폰에 ${name} 음성이 없습니다. 폰의 글자 읽어주기(TTS) 설정에서 ${name} 음성을 받아 주세요.`;
+    }
   };
+  langButtons?.addEventListener("click", (event) => {
+    const lang = (event.target as HTMLElement).closest<HTMLElement>("[data-lang]")?.dataset.lang;
+    if (!isPatientLang(lang)) return;
+    changeLang(lang);
+    showLang();
+    showVoice();
+  });
   for (const radio of radios) {
     radio.addEventListener("change", () => {
       if (!radio.checked) return;
@@ -562,7 +662,7 @@ function setupSettings(): void {
     });
   }
   voiceSelect?.addEventListener("change", () => {
-    setChosenVoice(getVoiceGender(), voiceSelect.value);
+    setChosenVoice(getVoiceGender(), voiceSelect.value, patientLang);
     showVoice();
     sample();
   });
@@ -586,6 +686,7 @@ function setupSettings(): void {
   open.addEventListener("click", () => {
     input.value = getGeminiKey();
     showState();
+    showLang();
     showVoice();
     dialog.showModal();
   });
