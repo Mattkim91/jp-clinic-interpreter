@@ -145,7 +145,7 @@ export function speakJapanese(text: string): boolean {
   if (synth.paused) synth.resume();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "ja-JP";
-  utterance.rate = 0.82;
+  utterance.rate = 0.9;
   const gender = getVoiceGender();
   const { voice, pitch } = resolveVoice(gender);
   utterance.pitch = pitch;
