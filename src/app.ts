@@ -6,8 +6,8 @@ import { detectPlatform, type PlatformInfo } from "./platform";
 import { politify } from "./polite";
 import { PRESET_GROUPS, PRESETS, prepare, rewriteQuery } from "./prepare";
 import { hangulFromTokens } from "./reading";
-import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakText, unlockSpeech, voiceMissing, voicesFor, type VoiceGender } from "./speak";
-import { createListener, type ListenState, type SpeechLang } from "./speech";
+import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakText, stopSpeaking, unlockSpeech, voiceMissing, voicesFor, type VoiceGender } from "./speak";
+import { createListener, type Listener, type ListenState, type SpeechLang } from "./speech";
 import { fetchArabicLatin, fetchJaRomaji, translateFromKo, translateToKo } from "./translate";
 import { getGeminiKey, setGeminiKey, translateToKoWithGemini, translateToWithGemini, translateWithGemini } from "./gemini";
 import { loadTokenizer, type Tokenizer } from "./tokenizer";
@@ -54,6 +54,53 @@ let mode: Mode = loadMode();
 let patientLang: PatientLang = loadPatientLang();
 /** Language the recognizer is (or was last) listening in. */
 let hearLang: SpeechLang = "ko";
+
+let listener: Listener | null = null;
+
+/** What is being read aloud right now. */
+const aloud: { lang: SpeechLang }[] = [];
+
+/** Would the mic turn this speech into a card? (Korean is only ever read to the therapist.) */
+function micWouldHear(spoken: SpeechLang, mic: SpeechLang): boolean {
+  return spoken === "ko" || spoken === mic;
+}
+
+/** Read aloud, with the mic closed meanwhile when it would otherwise hear the phone and answer itself. */
+function readAloud(text: string, lang: SpeechLang, queue = false): void {
+  if (micWouldHear(lang, hearLang)) listener?.hold();
+  const entry = { lang };
+  const spoke = speakText(text, lang, {
+    queue,
+    onDone: () => {
+      aloud.splice(aloud.indexOf(entry), 1);
+      // A short tail so the last syllable is not heard.
+      window.setTimeout(() => {
+        if (!aloud.some((item) => micWouldHear(item.lang, hearLang))) listener?.release();
+      }, 300);
+    },
+  });
+  if (spoke) aloud.push(entry);
+  else listener?.release();
+}
+
+/** Patient sentences waiting to be read in Korean: never talk (and close the mic) over a patient still speaking. */
+let waitingKo: string[] = [];
+let interimAt = 0;
+let waitTimer = 0;
+const INTERIM_STALE = 6000;
+
+function drainKo(): void {
+  window.clearTimeout(waitTimer);
+  if (!waitingKo.length) return;
+  const patientTalking = interim && hearLang !== "ko" && Date.now() - interimAt < INTERIM_STALE;
+  if (patientTalking) {
+    waitTimer = window.setTimeout(drainKo, 500);
+    return;
+  }
+  const texts = waitingKo;
+  waitingKo = [];
+  for (const text of texts) readAloud(text, "ko", true);
+}
 
 let dictPromise: Promise<void> | null = null;
 /** Japanese reading dictionary (18MB): only fetched once Japanese is used. */
@@ -112,6 +159,10 @@ async function fillPatient(card: Card): Promise<void> {
     card.ko = ko;
     card.status = "ready";
     card.error = "";
+    if (autoSpeak) {
+      waitingKo.push(ko);
+      drainKo();
+    }
   } catch (error) {
     card.status = "error";
     card.error = friendlyError(error);
@@ -148,7 +199,7 @@ async function fillOther(card: Card, lang: "en" | "ar"): Promise<void> {
     card.reading = reading;
     card.status = "ready";
     card.error = "";
-    if (autoSpeak) speakText(text, lang);
+    if (autoSpeak) readAloud(text, lang);
   } catch (error) {
     card.status = "error";
     card.error = friendlyError(error);
@@ -187,7 +238,7 @@ async function fill(card: Card): Promise<void> {
     card.reading = reading;
     card.status = "ready";
     card.error = "";
-    if (autoSpeak) speakText(ja, "ja");
+    if (autoSpeak) readAloud(ja, "ja");
   } catch (error) {
     card.status = "error";
     card.error = friendlyError(error);
@@ -217,15 +268,26 @@ function retry(id: number): void {
 
 function speakCard(id: number): void {
   const card = cards.find((item) => item.id === id);
-  if (!card || card.speaker === "patient" || card.status !== "ready" || !card.text) return;
+  if (!card || card.status !== "ready") return;
+  const patient = card.speaker === "patient";
+  const lang: SpeechLang = patient ? "ko" : card.lang;
+  const text = patient ? card.ko : card.text;
+  if (!text) return;
+  const name = patient ? "한국어" : LANGS[card.lang].name;
   if (!canSpeak()) {
-    setToast(`이 브라우저는 ${LANGS[card.lang].name} 소리 내기를 지원하지 않습니다.`);
+    setToast(`이 브라우저는 ${name} 소리 내기를 지원하지 않습니다.`);
     return;
   }
-  if (card.lang !== "ja" && voiceMissing(card.lang)) {
-    setToast(`이 폰에 ${LANGS[card.lang].name} 음성이 없어 소리가 안 날 수 있습니다. 폰의 글자 읽어주기 설정에서 받아 주세요.`);
+  if (lang !== "ja" && voiceMissing(lang)) {
+    setToast(`이 폰에 ${name} 음성이 없어 소리가 안 날 수 있습니다. 폰의 글자 읽어주기 설정에서 받아 주세요.`);
   }
-  speakText(card.text, card.lang);
+  readAloud(text, lang);
+}
+
+function speakButton(id: number, name: string): string {
+  return `<button type="button" class="speak" data-speak="${id}" aria-label="${name}로 읽기">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2L12 18.8V5.2L7.2 9.5H4z" fill="currentColor"/><path d="M15.2 8.2a5 5 0 0 1 0 7.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M17.6 5.8a8 8 0 0 1 0 12.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>${name}로 읽기</span>
+        </button>`;
 }
 
 function scrollLog(): void {
@@ -371,7 +433,7 @@ function renderCards(): void {
         if (card.status === "error") {
           return `<article class="card is-patient is-error${newest}" data-card="${card.id}">${label}<p class="ko-big ja-wait">번역되지 않았습니다</p><p class="error-text">${escapeHtml(card.error)}</p>${src}<button type="button" class="retry" data-retry="${card.id}">다시 번역</button></article>`;
         }
-        return `<article class="card is-patient${newest}" data-card="${card.id}">${label}<p class="ko-big">${escapeHtml(card.ko)}</p>${src}</article>`;
+        return `<article class="card is-patient${newest}" data-card="${card.id}">${label}<p class="ko-big">${escapeHtml(card.ko)}</p>${src}${speakButton(card.id, "한국어")}</article>`;
       }
       if (card.status === "loading") {
         return `<article class="card is-loading${newest}" data-card="${card.id}"><p class="ja ja-wait">번역하는 중…</p><p class="ko">${escapeHtml(card.ko)}</p></article>`;
@@ -380,9 +442,7 @@ function renderCards(): void {
         return `<article class="card is-error${newest}" data-card="${card.id}"><p class="ja ja-wait">번역되지 않았습니다</p><p class="error-text">${escapeHtml(card.error)}</p><p class="ko">${escapeHtml(card.ko)}</p><button type="button" class="retry" data-retry="${card.id}">다시 번역</button></article>`;
       }
       return `<article class="card${newest}" data-card="${card.id}">
-        <button type="button" class="speak" data-speak="${card.id}" aria-label="${name}로 읽기">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2L12 18.8V5.2L7.2 9.5H4z" fill="currentColor"/><path d="M15.2 8.2a5 5 0 0 1 0 7.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M17.6 5.8a8 8 0 0 1 0 12.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>${name}로 읽기</span>
-        </button>
+        ${speakButton(card.id, name)}
         <p class="ja" lang="${card.lang}" dir="${dir}">${escapeHtml(card.text)}</p>
         <p class="reading">${escapeHtml(card.reading)}</p>
         <p class="ko">${escapeHtml(card.ko)}</p>
@@ -405,11 +465,13 @@ export function startApp(): void {
   primeVoices();
   const video = document.querySelector<HTMLVideoElement>("#nosleep");
   const wake = video ? createWake(video) : null;
-  const listener = createListener({
+  const mic = createListener({
     onFinal: (text, lang) => (lang === "ko" ? submit(text) : submitPatient(text, lang)),
     onInterim: (text) => {
       interim = text;
+      interimAt = Date.now();
       renderChrome();
+      if (!interim) drainKo();
     },
     onState: (state) => {
       listening = state;
@@ -420,7 +482,8 @@ export function startApp(): void {
     kind: platform.kind,
   });
 
-  if (!listener.supported) listening = "unsupported";
+  listener = mic;
+  if (!mic.supported) listening = "unsupported";
 
   const presetRow = document.querySelector<HTMLElement>("#presets");
   if (presetRow) {
@@ -469,13 +532,14 @@ export function startApp(): void {
     auto.checked = autoSpeak;
     auto.addEventListener("change", () => {
       autoSpeak = auto.checked;
+      if (!autoSpeak) waitingKo = [];
       localStorage.setItem("clinic-autospeak", autoSpeak ? "1" : "0");
       if (autoSpeak) unlockSpeech();
     });
   }
 
   const stopListening = () => {
-    listener.stop();
+    mic.stop();
     void wake?.release().then(() => {
       wakeMode = "off";
       render();
@@ -484,7 +548,7 @@ export function startApp(): void {
   /** Tap a mic for a language: start it, switch to it, or stop when it is already live. */
   const toggleMic = (lang: SpeechLang) => {
     unlockSpeech();
-    if (!listener.supported) {
+    if (!mic.supported) {
       listening = "unsupported";
       render();
       document.querySelector<HTMLInputElement>("#manual-input")?.focus();
@@ -495,8 +559,10 @@ export function startApp(): void {
       return;
     }
     const wasLive = listening === "listening";
+    // Starting to talk ends a reading the new mic would pick up.
+    if (aloud.some((item) => micWouldHear(item.lang, lang))) stopSpeaking();
     hearLang = lang;
-    listener.start(lang);
+    mic.start(lang);
     render();
     if (!wasLive) {
       void wake?.acquire(true).then((acquired) => {
@@ -550,6 +616,7 @@ export function startApp(): void {
       return;
     }
     cards = [];
+    waitingKo = [];
     clearArmed = false;
     clear.textContent = "기록 지우기";
     render();

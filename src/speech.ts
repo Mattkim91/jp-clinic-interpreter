@@ -135,6 +135,10 @@ export type Listener = {
   /** Start listening in a language (default Korean). Restarts when already listening in another language. */
   start: (lang?: SpeechLang) => void;
   stop: () => void;
+  /** Close the mic while the phone itself talks (so it does not hear itself); still counts as listening. */
+  hold: () => void;
+  /** Open the mic again after hold(). */
+  release: () => void;
   lang: () => SpeechLang;
 };
 
@@ -171,6 +175,8 @@ export function createListener(options: {
       stop() {
         options.onState("unsupported");
       },
+      hold() {},
+      release() {},
       lang: () => "ko",
     };
   }
@@ -184,6 +190,7 @@ export function createListener(options: {
   const continuous = kind !== "ios";
   let recognition: RecHandle | null = null;
   let listening = false;
+  let held = false;
   let timer = 0;
   let quietRestarts = 0;
   let pending = "";
@@ -315,6 +322,7 @@ export function createListener(options: {
       }
       currentLang = lang;
       listening = true;
+      held = false;
       quietRestarts = 0;
       clearTimer();
       clearFlush();
@@ -331,8 +339,33 @@ export function createListener(options: {
       }
       begin(true);
     },
+    hold() {
+      if (!listening || held) return;
+      held = true;
+      clearTimer();
+      if (recognition) {
+        recognition.onend = null;
+        recognition.onerror = null;
+        recognition.onresult = null;
+        try {
+          recognition.abort();
+        } catch {
+          /* already stopped */
+        }
+        recognition = null;
+      }
+      flush();
+    },
+    release() {
+      if (!held) return;
+      held = false;
+      if (!listening) return;
+      quietRestarts = 0;
+      begin(false);
+    },
     stop() {
       listening = false;
+      held = false;
       clearTimer();
       flush();
       options.onInterim("");

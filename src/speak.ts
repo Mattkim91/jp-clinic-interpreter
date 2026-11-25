@@ -1,5 +1,6 @@
-import { LANGS, type PatientLang } from "./lang";
+import type { PatientLang } from "./lang";
 import { detectPlatform } from "./platform";
+import { recognitionLang, type SpeechLang } from "./speech";
 
 let unlocked = false;
 let resumeHack = 0;
@@ -183,24 +184,64 @@ export function unlockSpeech(): void {
 }
 
 /** True when the phone lists voices but none for this language (sound may not come out). */
-export function voiceMissing(lang: PatientLang): boolean {
+export function voiceMissing(lang: SpeechLang): boolean {
   const all = window.speechSynthesis?.getVoices() ?? [];
+  if (lang === "ko") return all.length > 0 && !all.some((voice) => /^(ko|kor)([-_]|$)/i.test(voice.lang));
   return all.length > 0 && voicesFor(lang).length === 0;
 }
 
-export function speakText(text: string, lang: PatientLang): boolean {
+/** Speeches asked for and not finished yet. Holding the utterance also keeps Chrome from dropping its end event. */
+const active = new Map<SpeechSynthesisUtterance, () => void>();
+
+function finishAll(): void {
+  for (const done of [...active.values()]) done();
+}
+
+export function stopSpeaking(): void {
+  window.speechSynthesis?.cancel();
+  finishAll();
+}
+
+/** Call `onDone` once: at the end event, when the phone went quiet without one, or at a time limit. */
+function trackEnd(utterance: SpeechSynthesisUtterance, onDone: () => void): void {
+  const synth = window.speechSynthesis;
+  const started = Date.now();
+  const limit = 6000 + (utterance.text.length * 350) / utterance.rate;
+  let timer = 0;
+  const done = () => {
+    if (!active.delete(utterance)) return;
+    window.clearInterval(timer);
+    onDone();
+  };
+  active.set(utterance, done);
+  utterance.onend = done;
+  utterance.onerror = done;
+  timer = window.setInterval(() => {
+    const waited = Date.now() - started;
+    if (waited > limit * active.size || (waited > 1500 && !synth.speaking && !synth.pending)) done();
+  }, 250);
+}
+
+/** Read aloud. Normally replaces what is being read; `queue` waits for it instead. */
+export function speakText(text: string, lang: SpeechLang, options: { queue?: boolean; onDone?: () => void } = {}): boolean {
   const synth = window.speechSynthesis;
   if (!synth || !text.trim()) return false;
   unlocked = true;
   if (synth.paused) synth.resume();
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = LANGS[lang].tag;
+  utterance.lang = recognitionLang(lang);
   utterance.rate = getSpeechRate();
-  const gender = getVoiceGender();
-  const { voice, pitch } = resolveVoice(gender, lang);
-  utterance.pitch = pitch;
-  if (voice) utterance.voice = voice;
-  if (synth.speaking) synth.cancel();
+  // Korean is for the therapist: the phone's own default voice.
+  if (lang !== "ko") {
+    const { voice, pitch } = resolveVoice(getVoiceGender(), lang);
+    utterance.pitch = pitch;
+    if (voice) utterance.voice = voice;
+  }
+  if (!options.queue) {
+    if (synth.speaking) synth.cancel();
+    finishAll();
+  }
+  trackEnd(utterance, options.onDone ?? (() => {}));
   synth.speak(utterance);
 
   const ios =

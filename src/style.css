@@ -594,6 +594,10 @@ h1 { font-size: 1.2rem; color: var(--green); }
 .log { scroll-padding: 10px 0; }
 .log .card { min-height: calc(100% - 20px); }
 
+/* v2.6: patient cards get a read-in-Korean button */
+.card.is-patient:not(.is-loading):not(.is-error) { padding-bottom: 84px; }
+.card.is-patient .speak { background: #fbe0c4; color: #8a4b12; }
+
 /* v2.5: patient language setting (Japanese / English / Arabic) */
 .lang-choice { display: flex; gap: 6px; margin: 4px 0 16px; padding: 4px; border-radius: 14px; background: #ece5d8; }
 .lang-choice button {
