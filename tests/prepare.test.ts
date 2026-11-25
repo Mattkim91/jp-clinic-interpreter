@@ -13,13 +13,14 @@ describe("clinic phrase preparation", () => {
 
   it("catches the same lines without spaces and the dangerous homonyms", () => {
     assert.equal(prepare("엉덩이들어보세요").overrideJa, "お尻を上げてください");
+    assert.equal(prepare("안녕하세요").overrideJa, "こんにちは。");
     assert.equal(prepare("배에 힘 주세요").overrideJa, "お腹に力を入れてください");
     assert.equal(prepare("깊게 들이쉬고 내쉬세요").overrideJa, "深く息を吸って吐いてください");
   });
 
   it("rewrites other body-part lifts so 들다 is not heard as listen", () => {
-    const prepared = prepare("다리 들어보세요");
+    const prepared = prepare("왼다리 들어보세요");
     assert.equal(prepared.overrideJa, undefined);
-    assert.equal(prepared.query, "다리를 위로 올려 주세요");
+    assert.equal(prepared.query, "왼다리를 위로 올려 주세요");
   });
 });

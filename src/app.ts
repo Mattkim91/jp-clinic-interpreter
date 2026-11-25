@@ -1,7 +1,7 @@
 import { romajiToHangul } from "./hangul";
 import { detectPlatform, type PlatformInfo } from "./platform";
 import { politify } from "./polite";
-import { PRESETS, prepare } from "./prepare";
+import { PRESET_GROUPS, PRESETS, prepare } from "./prepare";
 import { hangulFromTokens } from "./reading";
 import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, japaneseVoices, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakJapanese, unlockSpeech, type VoiceGender } from "./speak";
 import { createListener, type ListenState } from "./speech";
@@ -262,9 +262,13 @@ export function startApp(): void {
 
   const presetRow = document.querySelector<HTMLElement>("#presets");
   if (presetRow) {
-    presetRow.innerHTML = PRESETS.map(
-      (preset) =>
-        `<button type="button" class="chip" data-preset="${escapeHtml(preset.ko)}">${escapeHtml(preset.label)}</button>`,
+    presetRow.innerHTML = PRESET_GROUPS.map(
+      (group) =>
+        `<div class="preset-group"><p class="preset-title">${escapeHtml(group)}</p><div class="preset-chips">` +
+        PRESETS.filter((preset) => preset.group === group)
+          .map((preset) => `<button type="button" class="chip" data-preset="${escapeHtml(preset.ko)}">${escapeHtml(preset.ko)}</button>`)
+          .join("") +
+        `</div></div>`,
     ).join("");
     presetRow.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-preset]");
