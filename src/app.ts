@@ -1,4 +1,5 @@
 import { arabicLatinToHangul } from "./arabic";
+import { createAutoMic, type AutoMic } from "./automic";
 import { romajiToHangul } from "./hangul";
 import { LANG_ORDER, LANGS, isPatientLang, loadPatientLang, savePatientLang, type PatientLang } from "./lang";
 import { fixedPhrase } from "./phrases";
@@ -9,8 +10,9 @@ import { hangulFromTokens } from "./reading";
 import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakText, stopSpeaking, unlockSpeech, voiceMissing, voicesFor, type VoiceGender } from "./speak";
 import { createListener, type Listener, type ListenState, type SpeechLang } from "./speech";
 import { fetchArabicLatin, fetchJaRomaji, translateFromKo, translateToKo } from "./translate";
-import { getGeminiKey, setGeminiKey, translateToKoWithGemini, translateToWithGemini, translateWithGemini } from "./gemini";
+import { getGeminiKey, interpretAudio, setGeminiKey, translateToKoWithGemini, translateToWithGemini, translateWithGemini } from "./gemini";
 import { loadTokenizer, type Tokenizer } from "./tokenizer";
+import { isEcho, type Turn } from "./turns";
 import { createWake, type WakeMode } from "./wake";
 
 type Card = {
@@ -41,11 +43,13 @@ let tokenizer: Tokenizer | null = null;
 let dictError = "";
 let clearArmed = false;
 let autoSpeak = localStorage.getItem("clinic-autospeak") === "1";
-type Mode = "one" | "two";
+/** "auto": open microphone, Gemini tells the languages apart and everything is read aloud. */
+type Mode = "one" | "two" | "auto";
 const MODE_KEY = "clinic-mode";
 function loadMode(): Mode {
   try {
-    return localStorage.getItem(MODE_KEY) === "two" ? "two" : "one";
+    const saved = localStorage.getItem(MODE_KEY);
+    return saved === "two" || saved === "auto" ? saved : "one";
   } catch {
     return "one";
   }
@@ -56,6 +60,16 @@ let patientLang: PatientLang = loadPatientLang();
 let hearLang: SpeechLang = "ko";
 
 let listener: Listener | null = null;
+let autoMic: AutoMic | null = null;
+/** Auto mode microphone is open. */
+let autoOn = false;
+let autoHeard = false;
+let autoSince = 0;
+/** Recordings being interpreted right now. */
+let autoBusy = 0;
+let autoError = "";
+/** Recently read lines, so the phone does not interpret its own voice. */
+let spokenLately: { text: string; at: number }[] = [];
 
 /** What is being read aloud right now. */
 const aloud: { lang: SpeechLang }[] = [];
@@ -67,7 +81,11 @@ function micWouldHear(spoken: SpeechLang, mic: SpeechLang): boolean {
 
 /** Read aloud, with the mic closed meanwhile when it would otherwise hear the phone and answer itself. */
 function readAloud(text: string, lang: SpeechLang, queue = false): void {
-  if (micWouldHear(lang, hearLang)) listener?.hold();
+  if (autoOn) {
+    autoMic?.pause();
+    const now = Date.now();
+    spokenLately = [...spokenLately.filter((item) => now - item.at < 20000), { text, at: now }];
+  } else if (micWouldHear(lang, hearLang)) listener?.hold();
   const entry = { lang };
   const spoke = speakText(text, lang, {
     queue,
@@ -75,31 +93,49 @@ function readAloud(text: string, lang: SpeechLang, queue = false): void {
       aloud.splice(aloud.indexOf(entry), 1);
       // A short tail so the last syllable is not heard.
       window.setTimeout(() => {
+        if (!aloud.length) autoMic?.resume();
+        if (mode === "auto") renderChrome();
         if (!aloud.some((item) => micWouldHear(item.lang, hearLang))) listener?.release();
-      }, 300);
+      }, autoOn ? 500 : 300);
     },
   });
   if (spoke) aloud.push(entry);
-  else listener?.release();
+  else {
+    listener?.release();
+    if (!aloud.length) autoMic?.resume();
+  }
 }
 
-/** Patient sentences waiting to be read in Korean: never talk (and close the mic) over a patient still speaking. */
-let waitingKo: string[] = [];
+/** Lines waiting to be read: never talk (and close the mic) over someone still speaking. */
+let waiting: { text: string; lang: SpeechLang }[] = [];
 let interimAt = 0;
 let waitTimer = 0;
 const INTERIM_STALE = 6000;
 
-function drainKo(): void {
+function drainWaiting(): void {
   window.clearTimeout(waitTimer);
-  if (!waitingKo.length) return;
-  const patientTalking = interim && hearLang !== "ko" && Date.now() - interimAt < INTERIM_STALE;
-  if (patientTalking) {
-    waitTimer = window.setTimeout(drainKo, 500);
+  if (!waiting.length) return;
+  const talking = autoOn
+    ? autoHeard && Date.now() - autoSince < INTERIM_STALE
+    : interim && hearLang !== "ko" && Date.now() - interimAt < INTERIM_STALE;
+  if (talking) {
+    waitTimer = window.setTimeout(drainWaiting, 300);
     return;
   }
-  const texts = waitingKo;
-  waitingKo = [];
-  for (const text of texts) readAloud(text, "ko", true);
+  const lines = waiting;
+  waiting = [];
+  for (const line of lines) readAloud(line.text, line.lang, true);
+}
+
+/** "끝나면 읽어 주기": always on in auto mode. */
+function autoRead(text: string, lang: SpeechLang): void {
+  if (!autoSpeak && mode !== "auto") return;
+  if (mode !== "auto" && lang !== "ko") {
+    readAloud(text, lang);
+    return;
+  }
+  waiting.push({ text, lang });
+  drainWaiting();
 }
 
 let dictPromise: Promise<void> | null = null;
@@ -145,10 +181,13 @@ async function readingFor(ja: string): Promise<string> {
   return hangul;
 }
 
-async function fillPatient(card: Card): Promise<void> {
+/** A translation that already came with the recording (auto mode). */
+type Given = { text: string; reading: string };
+
+async function fillPatient(card: Card, given?: Given): Promise<void> {
   try {
-    let ko = "";
-    if (getGeminiKey()) {
+    let ko = given?.text ?? "";
+    if (!ko && getGeminiKey()) {
       try {
         ko = await translateToKoWithGemini(card.text, card.lang);
       } catch {
@@ -159,10 +198,7 @@ async function fillPatient(card: Card): Promise<void> {
     card.ko = ko;
     card.status = "ready";
     card.error = "";
-    if (autoSpeak) {
-      waitingKo.push(ko);
-      drainKo();
-    }
+    autoRead(ko, "ko");
   } catch (error) {
     card.status = "error";
     card.error = friendlyError(error);
@@ -171,22 +207,22 @@ async function fillPatient(card: Card): Promise<void> {
   scrollLog();
 }
 
-function submitPatient(spoken: string, lang: PatientLang = patientLang): void {
+function submitPatient(spoken: string, lang: PatientLang = patientLang, given?: Given): void {
   const text = spoken.replace(/\s+/g, " ").trim();
   if (!text) return;
   const card: Card = { id: nextId++, speaker: "patient", lang, ko: "", text, reading: "", status: "loading", error: "" };
   cards.push(card);
   render();
   scrollLog();
-  void fillPatient(card);
+  void fillPatient(card, given);
 }
 
 /** Korean → English/Arabic: fixed phrase, then Gemini, then Google. The reading may follow later. */
-async function fillOther(card: Card, lang: "en" | "ar"): Promise<void> {
+async function fillOther(card: Card, lang: "en" | "ar", given?: Given): Promise<void> {
   try {
-    const fixed = fixedPhrase(card.ko, lang);
-    let text = fixed?.text ?? "";
-    let reading = fixed?.reading ?? "";
+    const known = fixedPhrase(card.ko, lang) ?? given;
+    let text = known?.text ?? "";
+    let reading = known?.reading ?? "";
     if (!text && getGeminiKey()) {
       try {
         ({ text, reading } = await translateToWithGemini(card.ko, lang));
@@ -199,7 +235,7 @@ async function fillOther(card: Card, lang: "en" | "ar"): Promise<void> {
     card.reading = reading;
     card.status = "ready";
     card.error = "";
-    if (autoSpeak) readAloud(text, lang);
+    autoRead(text, lang);
   } catch (error) {
     card.status = "error";
     card.error = friendlyError(error);
@@ -218,12 +254,12 @@ async function fillOther(card: Card, lang: "en" | "ar"): Promise<void> {
   }
 }
 
-async function fill(card: Card): Promise<void> {
-  if (card.speaker === "patient") return fillPatient(card);
-  if (card.lang !== "ja") return fillOther(card, card.lang);
+async function fill(card: Card, given?: Given): Promise<void> {
+  if (card.speaker === "patient") return fillPatient(card, given);
+  if (card.lang !== "ja") return fillOther(card, card.lang, given);
   try {
     const prepared = prepare(card.ko);
-    let translated = prepared.overrideJa ?? "";
+    let translated = prepared.overrideJa ?? given?.text ?? "";
     if (!translated && getGeminiKey()) {
       try {
         translated = await translateWithGemini(card.ko);
@@ -238,7 +274,7 @@ async function fill(card: Card): Promise<void> {
     card.reading = reading;
     card.status = "ready";
     card.error = "";
-    if (autoSpeak) readAloud(ja, "ja");
+    autoRead(ja, "ja");
   } catch (error) {
     card.status = "error";
     card.error = friendlyError(error);
@@ -247,14 +283,48 @@ async function fill(card: Card): Promise<void> {
   scrollLog();
 }
 
-function submit(korean: string): void {
+function submit(korean: string, lang: PatientLang = patientLang, given?: Given): void {
   const ko = korean.replace(/\s+/g, " ").trim();
   if (!ko) return;
-  const card: Card = { id: nextId++, speaker: "therapist", lang: patientLang, ko, text: "", reading: "", status: "loading", error: "" };
+  const card: Card = { id: nextId++, speaker: "therapist", lang, ko, text: "", reading: "", status: "loading", error: "" };
   cards.push(card);
   render();
   scrollLog();
-  void fill(card);
+  void fill(card, given);
+}
+
+/** Keeps the cards in spoken order even when a later recording is answered first. */
+let turnOrder: Promise<void> = Promise.resolve();
+
+function autoErrorText(error: unknown): string {
+  const { status, badKey } = (error ?? {}) as { status?: number; badKey?: boolean };
+  if (badKey) return "Gemini 키가 올바르지 않습니다. 설정에서 키를 확인해 주세요.";
+  if (status === 429) return "Gemini 사용량 한도에 닿았습니다. 잠시 쉬거나 양방향으로 써 주세요.";
+  return "방금 한 말을 통역하지 못했습니다. 다시 말해 주세요.";
+}
+
+function hearRecording(wav: string): void {
+  const lang = patientLang;
+  autoBusy += 1;
+  renderChrome();
+  const answer = interpretAudio(wav, lang).then(
+    (turns): { turns: Turn[]; error: string } => ({ turns, error: "" }),
+    (error: unknown) => ({ turns: [], error: autoErrorText(error) }),
+  );
+  turnOrder = turnOrder.then(async () => {
+    const { turns, error } = await answer;
+    autoBusy -= 1;
+    autoError = error;
+    const now = Date.now();
+    const spoken = spokenLately.filter((item) => now - item.at < 20000).map((item) => item.text);
+    for (const turn of turns) {
+      if (isEcho(turn.heard, spoken)) continue;
+      const given = { text: turn.translation, reading: turn.reading };
+      if (turn.speaker === "ko") submit(turn.heard, lang, given);
+      else submitPatient(turn.heard, lang, given);
+    }
+    renderChrome();
+  });
 }
 
 function retry(id: number): void {
@@ -302,6 +372,8 @@ function langName(lang: SpeechLang): string {
 }
 
 function statusText(): string {
+  if (mode === "auto" && autoOn) return `자동 통역 중 · 한국어 ↔ ${LANGS[patientLang].name}`;
+  if (mode === "auto" && listening === "unsupported") return `대기 · ${LANGS[patientLang].name}`;
   if (listening === "listening") return mode === "two" ? `듣는 중 · ${langName(hearLang)}` : "듣는 중";
   if (listening === "needs-gesture") return "마이크를 다시 눌러 주세요";
   if (listening === "denied") return "마이크 권한이 필요합니다";
@@ -311,6 +383,13 @@ function statusText(): string {
 }
 
 function hintText(): string {
+  if (mode === "auto") {
+    if (autoError) return autoError;
+    if (!getGeminiKey()) return "자동 모드는 Gemini 키가 필요합니다. 설정에서 넣어 주세요.";
+    if (!autoOn) return `한국어와 ${LANGS[patientLang].name}를 알아서 구분해 통역하고 읽어 줍니다.`;
+    if (aloud.length) return "읽어 주는 중에는 듣지 않습니다. 끝난 뒤 말해 주세요.";
+    return "한 사람씩 말하고 잠깐 쉬면 바로 통역합니다.";
+  }
   if (wakeMode === "unsupported" && listening === "listening") {
     return "화면 켜 두기를 지원하지 않습니다. 자동 잠금을 꺼 주세요.";
   }
@@ -350,8 +429,9 @@ function renderChrome(): void {
 
   status.textContent = statusText();
   hint.textContent = hintText();
-  interimText.textContent = interim;
-  interimEl.hidden = !interim;
+  const doing = mode !== "auto" ? interim : autoHeard ? "듣는 중…" : autoBusy ? "통역하는 중…" : "";
+  interimText.textContent = doing;
+  interimEl.hidden = !doing;
   interimEl.classList.toggle("is-patient", mode === "two" && hearLang !== "ko");
   interimText.dir = hearLang === "ko" ? "ltr" : LANGS[hearLang].dir;
   const interimLang = document.querySelector<HTMLElement>("#interim-lang");
@@ -363,7 +443,10 @@ function renderChrome(): void {
   const live = listening === "listening";
   mic.classList.toggle("is-live", live);
   mic.setAttribute("aria-pressed", live ? "true" : "false");
-  micLabel.textContent = live ? "음성 입력 중 · 멈추기" : "음성 입력 시작";
+  micLabel.textContent =
+    mode === "auto" ? (live ? "자동 통역 중 · 멈추기" : "자동 통역 시작") : live ? "음성 입력 중 · 멈추기" : "음성 입력 시작";
+  const autoLabel = document.querySelector<HTMLElement>("#auto-label");
+  if (autoLabel) autoLabel.hidden = mode === "auto";
 
   const pair = document.querySelector<HTMLElement>("#mic-pair");
   mic.hidden = mode === "two";
@@ -393,7 +476,7 @@ function renderChrome(): void {
     button.setAttribute("aria-checked", on ? "true" : "false");
   }
 
-  if (listening === "unsupported") {
+  if (listening === "unsupported" && mode !== "auto") {
     banner.hidden = false;
     banner.textContent =
       "이 브라우저에서는 음성 인식을 쓸 수 없습니다. 안드로이드는 Chrome 또는 삼성 인터넷, 아이폰은 음성 인식이 되는 최신 Safari를 사용해 주세요. 아래 입력창으로 번역할 수 있습니다.";
@@ -414,7 +497,9 @@ function renderCards(): void {
   const info = LANGS[patientLang];
   if (!cards.length) {
     log.innerHTML =
-      mode === "two"
+      mode === "auto"
+        ? `<div class="empty"><p class="empty-title">자동 통역</p><p><b>자동 통역 시작</b>을 한 번 누르세요. 한국어가 들리면 ${info.name}로, ${info.name}가 들리면 한국어로 바로 읽어 줍니다.</p><p class="empty-note">말소리가 Google Gemini로 전송됩니다. 환자에게 먼저 알려 주세요.${getGeminiKey() ? "" : "<br>Gemini 키가 필요합니다 (설정)."}</p></div>`
+        : mode === "two"
         ? `<div class="empty"><p class="empty-title">양방향 통역</p><p>내가 말할 때는 <b>🇰🇷 내가 말하기</b>, 환자가 말할 때는 <b>${info.flag} <bdi>${info.patientButton}</bdi></b> 버튼을 누르세요. 환자 말은 한국어로 크게 보여 줍니다.</p><p class="empty-ja" lang="${patientLang}" dir="${info.dir}">${info.invite}</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`
         : `<div class="empty"><p class="empty-title">아직 문장이 없습니다</p><p>마이크를 누르고 환자에게 할 말을 한국어로 하세요. 한 문장이 끝나면 ${info.name}가 큰 글씨로 쌓입니다.</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`;
     return;
@@ -471,7 +556,7 @@ export function startApp(): void {
       interim = text;
       interimAt = Date.now();
       renderChrome();
-      if (!interim) drainKo();
+      if (!interim) drainWaiting();
     },
     onState: (state) => {
       listening = state;
@@ -532,11 +617,78 @@ export function startApp(): void {
     auto.checked = autoSpeak;
     auto.addEventListener("change", () => {
       autoSpeak = auto.checked;
-      if (!autoSpeak) waitingKo = [];
+      if (!autoSpeak) waiting = [];
       localStorage.setItem("clinic-autospeak", autoSpeak ? "1" : "0");
       if (autoSpeak) unlockSpeech();
     });
   }
+
+  autoMic = createAutoMic({
+    onSegment: hearRecording,
+    onSpeaking: (speaking) => {
+      autoHeard = speaking;
+      if (speaking) {
+        autoSince = Date.now();
+        autoError = "";
+      }
+      renderChrome();
+      if (!speaking) drainWaiting();
+    },
+    onLost: () => {
+      autoOn = false;
+      autoHeard = false;
+      listening = "needs-gesture";
+      void wake?.release();
+      render();
+    },
+  });
+  const stopAuto = () => {
+    autoMic?.stop();
+    autoOn = false;
+    autoHeard = false;
+    waiting = [];
+    stopSpeaking();
+    listening = mic.supported ? "idle" : "unsupported";
+    void wake?.release().then(() => {
+      wakeMode = "off";
+      render();
+    });
+  };
+  const toggleAuto = () => {
+    unlockSpeech();
+    autoError = "";
+    if (autoOn) {
+      stopAuto();
+      render();
+      return;
+    }
+    if (!getGeminiKey()) {
+      render();
+      document.querySelector<HTMLButtonElement>("#open-settings")?.click();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      autoError = "이 브라우저에서는 마이크를 쓸 수 없습니다.";
+      render();
+      return;
+    }
+    stopSpeaking();
+    autoOn = true;
+    listening = "listening";
+    hearLang = "ko";
+    render();
+    autoMic?.start().catch((error: unknown) => {
+      autoOn = false;
+      listening = (error as { name?: string })?.name === "NotAllowedError" ? "denied" : "idle";
+      if (listening === "idle") autoError = "마이크를 열지 못했습니다. 다시 눌러 주세요.";
+      void wake?.release();
+      render();
+    });
+    void wake?.acquire(true).then((acquired) => {
+      wakeMode = acquired;
+      render();
+    });
+  };
 
   const stopListening = () => {
     mic.stop();
@@ -572,14 +724,19 @@ export function startApp(): void {
     }
   };
 
-  document.querySelector<HTMLButtonElement>("#mic")?.addEventListener("click", () => toggleMic("ko"));
+  document.querySelector<HTMLButtonElement>("#mic")?.addEventListener("click", () => (mode === "auto" ? toggleAuto() : toggleMic("ko")));
   document.querySelector<HTMLButtonElement>("#mic-ko")?.addEventListener("click", () => toggleMic("ko"));
   document.querySelector<HTMLButtonElement>("#mic-patient")?.addEventListener("click", () => toggleMic(patientLang));
 
   document.querySelector<HTMLElement>("#mode")?.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-mode]");
-    const next = button?.dataset.mode === "two" ? "two" : button?.dataset.mode === "one" ? "one" : null;
+    const next = button?.dataset.mode as Mode | undefined;
     if (!next || next === mode) return;
+    // The auto microphone and the speech recognizer never run together.
+    if (autoOn) stopAuto();
+    else if (next === "auto" && listening === "listening") stopListening();
+    if (next === "auto" && listening !== "unsupported") listening = "idle";
+    autoError = "";
     mode = next;
     try {
       localStorage.setItem(MODE_KEY, mode);
@@ -616,7 +773,7 @@ export function startApp(): void {
       return;
     }
     cards = [];
-    waitingKo = [];
+    waiting = [];
     clearArmed = false;
     clear.textContent = "기록 지우기";
     render();
@@ -655,7 +812,7 @@ declare global {
       submit: (text: string) => void;
       submitPatient: (text: string) => void;
       setLang: (lang: PatientLang) => void;
-      setMode: (mode: "one" | "two") => void;
+      setMode: (mode: "one" | "two" | "auto") => void;
       cards: () => Card[];
       dictReady: () => Promise<boolean>;
     };
@@ -682,7 +839,7 @@ function setupSettings(changeLang: (lang: PatientLang) => void): void {
   const radios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="voice-gender"]'));
   const voiceSelect = document.querySelector<HTMLSelectElement>("#voice-select");
   const testVoice = document.querySelector<HTMLButtonElement>("#test-voice");
-  const sample = () => speakText(LANGS[patientLang].sample, patientLang);
+  const sample = () => readAloud(LANGS[patientLang].sample, patientLang);
   const langButtons = document.querySelector<HTMLElement>("#lang-choice");
   const showLang = () => {
     if (!langButtons) return;
@@ -758,6 +915,8 @@ function setupSettings(changeLang: (lang: PatientLang) => void): void {
     dialog.showModal();
   });
   close.addEventListener("click", () => dialog.close());
+  // A key may have been added or removed.
+  dialog.addEventListener("close", render);
   remove.addEventListener("click", () => {
     setGeminiKey("");
     input.value = "";

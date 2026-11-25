@@ -32,7 +32,7 @@
     <div id="app" class="app">
       <header class="top">
         <div class="titles">
-          <h1>치료 통역 <span class="app-version">v2.6</span></h1>
+          <h1>치료 통역 <span class="app-version">v2.7</span></h1>
           <p id="status" class="status">준비 중</p>
         </div>
         <div class="top-actions">
@@ -92,13 +92,14 @@
           <button type="submit">번역</button>
         </form>
         <div class="dock-row">
-          <label class="auto">
+          <label class="auto" id="auto-label">
             <input id="auto-speak" type="checkbox" />
             <span>끝나면 읽어 주기</span>
           </label>
           <div id="mode" class="mode-toggle" role="radiogroup" aria-label="통역 방향">
             <button type="button" role="radio" data-mode="one" aria-checked="true">단방향</button>
             <button type="button" role="radio" data-mode="two" aria-checked="false">양방향</button>
+            <button type="button" role="radio" data-mode="auto" aria-checked="false">자동</button>
           </div>
         </div>
         <p id="hint" class="hint"></p>
