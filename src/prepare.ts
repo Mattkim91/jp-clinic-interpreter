@@ -1,3 +1,5 @@
+import { asksCondition } from "./polite";
+
 /**
  * Clinic phrases where a literal translation is unsafe.
  * 들다 is both "lift" and "listen", 쉬다 is both "breathe" and "rest",
@@ -82,16 +84,44 @@ for (const preset of PRESETS) {
   EXACT_KEYS.set(stripPunct(preset.ko), preset.ko);
 }
 
+/** Words that may be dropped in front of a pinned command without losing meaning. */
+const LEAD = "^(?:(?:자|네|예|이제|그럼|그러면)[\\s,.!]*)*";
+/** Request endings after 들어/빼/숙여... A question mark is only a request with 볼까요, 시겠어요 and the like. */
+const AFTER_EO =
+  "\\s*(?:(?:보세요|보셔요|보십시오|봐요|봅시다|볼게요|보실게요|보겠습니다|주세요|주셔요|주십시오)[\\s.!~]*|(?:볼까요|보실까요|보시겠어요|보실래요|주시겠어요|주실래요)[\\s.!~?]*)$";
+/** Request endings after the bare stem (올리-, 참-, 빼-). */
+const AFTER_STEM = "(?:으?(?:세요|셔요|십시오|실게요)[\\s.!~]*|으?(?:실까요|시겠어요|실래요)[\\s.!~?]*)$";
+
+/**
+ * A pinned line replaces the whole sentence, so it must BE the whole sentence: a question,
+ * a side, "~할 때" or a second instruction goes to the translator instead.
+ */
+function command(object: string, eo: string, stem: string): RegExp {
+  return new RegExp(`${LEAD}${object}(?:(?:${eo})${AFTER_EO}|(?:${stem})${AFTER_STEM})`);
+}
+
 /** `key` names the matching line in phrases.ts for the other patient languages. */
 export const PATTERNS: { re: RegExp; ja: string; key: string }[] = [
-  { re: /들이쉬고\s*.*내쉬|들이마시고\s*.*내쉬|들이쉬고\s*.*뱉|깊게\s*들이쉬/, ja: "深く息を吸って吐いてください", key: "깊게 들이쉬고 내쉬세요" },
-  { re: /숨\s*참|숨을\s*참|숨\s*멈추|숨을\s*멈추/, ja: "息を止めてください", key: "숨을 참으세요" },
-  { re: /숨\s*(을\s*)?(크게|깊이)|크게\s*숨|깊이\s*숨/, ja: "息を大きく吸ってください", key: "숨 크게 쉬세요" },
-  { re: /엉덩이.{0,8}(들어|올려)/, ja: "お尻を上げてください", key: "엉덩이 들어보세요" },
-  { re: /(배|복부).{0,6}힘.{0,6}(주|넣)/, ja: "お腹に力を入れてください", key: "배에 힘을 주세요" },
-  { re: /어깨.{0,6}힘.{0,6}빼/, ja: "肩の力を抜いてください", key: "어깨에 힘을 빼세요" },
-  { re: /허리.{0,8}(숙|앞으로\s*굽)/, ja: "腰を前に曲げてください", key: "허리를 숙이세요" },
-  { re: /돌아\s*눕|돌아눕/, ja: "反対側に向かって横になってください", key: "반대쪽으로 돌아누우세요" },
+  {
+    re: command("(?:숨(?:을)?\\s*)?(?:(?:크게|깊게|깊이)\\s*)?(?:숨(?:을)?\\s*)?들이(?:쉬|마시)고\\s*", "내쉬어|내뱉어|뱉어", "내쉬|내뱉|뱉"),
+    ja: "深く息を吸って吐いてください",
+    key: "깊게 들이쉬고 내쉬세요",
+  },
+  { re: command("(?:숨|호흡)(?:을)?\\s*", "참아|멈춰|멈추어", "참|멈추"), ja: "息を止めてください", key: "숨을 참으세요" },
+  {
+    re: command(
+      "(?:숨(?:을)?\\s*(?:크게|깊이|깊게)|(?:크게|깊이|깊게)\\s*숨(?:을)?|(?:크게|깊이|깊게)(?=\\s*들이))\\s*",
+      "들이쉬어|들이마셔|쉬어|마셔",
+      "들이쉬|들이마시|쉬|마시",
+    ),
+    ja: "息を大きく吸ってください",
+    key: "숨 크게 쉬세요",
+  },
+  { re: command("엉덩이(?:를|을)?\\s*(?:좀\\s*)?(?:위로\\s*)?", "들어\\s*올려|들어|올려", "들어\\s*올리|올리"), ja: "お尻を上げてください", key: "엉덩이 들어보세요" },
+  { re: command("(?:배|복부)에?\\s*힘(?:을)?\\s*(?:좀\\s*)?", "줘|주어|넣어", "주|넣"), ja: "お腹に力を入れてください", key: "배에 힘을 주세요" },
+  { re: command("어깨(?:에|의)?\\s*힘(?:을)?\\s*(?:좀\\s*)?", "빼", "빼"), ja: "肩の力を抜いてください", key: "어깨에 힘을 빼세요" },
+  { re: command("허리(?:를)?\\s*", "(?:앞으로\\s*)?숙여|앞으로\\s*굽혀", "(?:앞으로\\s*)?숙이|앞으로\\s*굽히"), ja: "腰を前に曲げてください", key: "허리를 숙이세요" },
+  { re: command("(?:반대쪽|반대편|반대)(?:으로|로)?\\s*", "돌아\\s*누워", "돌아\\s*누우"), ja: "反対側に向かって横になってください", key: "반대쪽으로 돌아누우세요" },
 ];
 
 const BODY =
@@ -101,6 +131,8 @@ export type Prepared = {
   original: string;
   query: string;
   overrideJa?: string;
+  /** Korean meaning of the pinned line, when it is not word for word what was said. */
+  meaning?: string;
 };
 
 export function stripPunct(input: string): string {
@@ -119,12 +151,13 @@ function eulReul(noun: string): "을" | "를" {
 
 /** Korean sent to the translator, with homonyms nudged toward the rehab sense. */
 export function rewriteQuery(korean: string): string {
-  const text = isNegated(korean) ? clarifyNegated(normalize(korean)) : normalize(korean);
-  const lift = new RegExp(`(${BODY})(을|를)?\\s*들어\\s*(?:보세요|주세요|주십시오|보시오)`);
+  const spelled = clarify(normalize(korean));
+  const text = asksCondition(spelled) ? `${spelled.replace(/[\s.!?~]+$/, "")}?` : spelled;
+  const lift = new RegExp(`(${BODY})(을|를)?\\s*((?:(?:살짝|조금|천천히|높이|더|좀|최대한|같이|번갈아)\\s*)*)들어\\s*(?:보세요|주세요|주십시오|보시오)`);
   const found = text.match(lift);
   if (found && !/들어\s*올리/.test(text)) {
     const noun = found[1];
-    return text.replace(lift, `${noun}${eulReul(noun)} 위로 올려 주세요`);
+    return text.replace(lift, `${noun}${eulReul(noun)} ${found[3]}위로 올려 주세요`);
   }
   return text;
 }
@@ -137,7 +170,7 @@ export function isNegated(korean: string): boolean {
 /** Optional lead-in and "don't" ending; anything longer goes to the translator so no clause is lost. */
 const NOT_START = "^(?:절대로?\\s*|아직\\s*|지금은?\\s*|이제\\s*)?";
 const NOT_END =
-  "(?:지\\s*(?:는|도|를)?\\s*(?:마세요|마셔요|마십시오|마요|마|말아\\s*주세요|말아요)|으?면\\s*안\\s*(?:돼요|되요|됩니다|돼))[\\s.!?]*$";
+  "(?:지\\s*(?:는|도|를)?\\s*(?:마세요|마셔요|마십시오|마요|마|말아\\s*주세요|말아요)|으?면\\s*안\\s*(?:돼요|되요|됩니다|돼))[\\s.!]*$";
 
 function dont(body: string): RegExp {
   return new RegExp(NOT_START + body + NOT_END);
@@ -158,11 +191,24 @@ export const NEGATIVE_PATTERNS: { re: RegExp; ja: string; key: string }[] = [
   { re: dont("(?:옆으로\\s*)?돌아\\s*눕"), ja: "横向きにならないでください", key: "돌아눕지 마세요" },
 ];
 
-/** Spell out words the keyless translator misreads in "don't" sentences. */
-function clarifyNegated(korean: string): string {
+/** Spell out words the keyless translator misreads: 숨 참다 becomes "breathe", 배 a boat, 들 때 "when listening". */
+function clarify(korean: string): string {
   return korean
-    .replace(/숨(을|은)?\s*참지/g, "호흡을 멈추지")
-    .replace(/숨(을|은)?\s*참으면/g, "호흡을 멈추면")
+    .replace(/숨(?:을)?\s*(크게|깊게|깊이)\s*쉬었/g, "숨을 $1 들이마셨")
+    .replace(/숨(?:을)?\s*(크게|깊게|깊이)\s*쉴/g, "숨을 $1 들이마실")
+    .replace(/숨(?:을)?\s*(크게|깊게|깊이)\s*쉬(면|고|니까)/g, "숨을 $1 들이마시$2")
+    .replace(new RegExp(`(${BODY})(을|를)?\\s*들\\s*때`, "g"), "$1$2 들어올릴 때")
+    .replace(new RegExp(`(${BODY})(을|를)?\\s*들(면|고)(?=\\s|$)`, "g"), "$1$2 들어올리$3")
+    .replace(/(면|때)\s*아프(?=세요|셔요|십니까)/g, "$1 통증이 있으")
+    .replace(/(^|\s)배(?:가|는)?\s*아프(?=세요|셔요|십니까)/g, "$1복부에 통증이 있으")
+    .replace(/허리(?:를)?\s*숙일\s*때/g, "허리를 앞으로 굽힐 때")
+    .replace(/허리(?:를)?\s*숙이면/g, "허리를 앞으로 굽히면")
+    .replace(/(왼쪽|오른쪽)(?:으로)?\s*돌아\s*(?=누우|누워|누울|눕)/g, "$1을 향해 옆으로 ")
+    .replace(/숨(을|은)?\s*참(지|기|고|는)/g, "호흡을 멈추$2")
+    .replace(/숨(을|은)?\s*참으/g, "호흡을 멈추")
+    .replace(/숨(을|은)?\s*참아/g, "호흡을 멈춰")
+    .replace(/숨(을|은)?\s*참았/g, "호흡을 멈췄")
+    .replace(/숨(을|은)?\s*참을/g, "호흡을 멈출")
     .replace(/(^|\s)배에\s*힘/g, "$1복부에 힘")
     .replace(/돌아\s*눕지/g, "옆으로 돌아서 눕지");
 }
@@ -174,7 +220,7 @@ export function prepare(input: string): Prepared {
   if (exact) return { original, query: original, overrideJa: exact };
   for (const pattern of isNegated(original) ? NEGATIVE_PATTERNS : PATTERNS) {
     if (pattern.re.test(original) || pattern.re.test(compact)) {
-      return { original, query: original, overrideJa: pattern.ja };
+      return { original, query: original, overrideJa: pattern.ja, meaning: pattern.key };
     }
   }
   return { original, query: rewriteQuery(original) };

@@ -32,7 +32,7 @@
     <div id="app" class="app">
       <header class="top">
         <div class="titles">
-          <h1>치료 통역 <span class="app-version">v2.9</span></h1>
+          <h1>치료 통역 <span class="app-version">v3.0</span></h1>
           <p id="status" class="status">준비 중</p>
         </div>
         <div class="top-actions">
@@ -67,6 +67,22 @@
           <button id="close-settings" type="button" class="text-btn">닫기</button>
         </div>
       </dialog>
+      <dialog id="phrase-editor" class="phrase-editor" aria-labelledby="phrase-editor-title">
+        <div class="pe-head">
+          <h2 id="phrase-editor-title">자주 쓰는 말 편집</h2>
+          <button id="phrase-close" type="button" class="pe-close">닫기</button>
+        </div>
+        <form id="phrase-form" class="manual">
+          <label class="sr" for="phrase-input">새 문구</label>
+          <input id="phrase-input" maxlength="60" autocomplete="off" placeholder="새 문구를 한국어로" enterkeyhint="done" />
+          <button type="submit">추가</button>
+        </form>
+        <p class="pe-help">★를 누르면 맨 위에 나옵니다. 내가 추가한 문구는 누를 때마다 번역하므로 ‘번역된 뜻’을 확인해 주세요. 이 폰에만 저장돼요.</p>
+        <p id="phrase-note" class="pe-note" role="status"></p>
+        <ul id="phrase-list" class="pe-list"></ul>
+        <button id="phrase-reset" type="button" class="pe-reset" hidden></button>
+      </dialog>
+      <dialog id="answers" class="answers" aria-label="환자 대답"></dialog>
       <p id="banner" class="banner" hidden></p>
       <div id="log" class="log" role="log" aria-relevant="additions"></div>
       <p id="interim" class="interim" hidden>
@@ -76,7 +92,11 @@
       </p>
       <div class="dock">
         <section class="phrases-panel" aria-labelledby="phrases-title">
-          <h2 id="phrases-title" class="panel-title">자주 쓰는 말</h2>
+          <div class="panel-head">
+            <h2 id="phrases-title" class="panel-title">자주 쓰는 말</h2>
+            <button id="edit-phrases" type="button" class="panel-btn" aria-label="자주 쓰는 말 편집">편집</button>
+            <button id="open-answers" type="button" class="panel-btn is-answer">환자 대답</button>
+          </div>
           <div id="presets" class="presets" aria-label="자주 쓰는 말"></div>
         </section>
         <div class="controls">

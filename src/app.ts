@@ -2,10 +2,12 @@ import { arabicLatinToHangul } from "./arabic";
 import { createAutoMic, type AutoMic } from "./automic";
 import { romajiToHangul } from "./hangul";
 import { LANG_ORDER, LANGS, isPatientLang, loadPatientLang, savePatientLang, type PatientLang } from "./lang";
+import { addPhrase, isCustom, loadPhrases, phraseGroups, removePhrase, resetPhrases, savePhrases, toggleFavorite, visiblePhrases } from "./myphrases";
+import { setupAnswers } from "./answerpanel";
 import { fixedPhrase } from "./phrases";
 import { detectPlatform, type PlatformInfo } from "./platform";
 import { politify } from "./polite";
-import { PRESET_GROUPS, PRESETS, prepare, rewriteQuery } from "./prepare";
+import { normalize, prepare, rewriteQuery } from "./prepare";
 import { hangulFromTokens } from "./reading";
 import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakText, stopSpeaking, unlockSpeech, voiceMissing, voicesFor, type VoiceGender } from "./speak";
 import { createListener, type Listener, type ListenState, type SpeechLang } from "./speech";
@@ -25,6 +27,10 @@ type Card = {
   /** The patient-language side. */
   text: string;
   reading: string;
+  /** The reading is still being made; the translation is already shown. */
+  readingWait?: boolean;
+  /** What the translation says, put back into Korean, so a wrong one is noticed. */
+  check?: string;
   status: "loading" | "ready" | "error";
   error: string;
 };
@@ -72,7 +78,7 @@ let autoError = "";
 let spokenLately: { text: string; at: number }[] = [];
 
 /** What is being read aloud right now. */
-const aloud: { lang: SpeechLang }[] = [];
+const aloud: { lang: SpeechLang; id?: number }[] = [];
 
 /** Would the mic turn this speech into a card? (Korean is only ever read to the therapist.) */
 function micWouldHear(spoken: SpeechLang, mic: SpeechLang): boolean {
@@ -80,17 +86,18 @@ function micWouldHear(spoken: SpeechLang, mic: SpeechLang): boolean {
 }
 
 /** Read aloud, with the mic closed meanwhile when it would otherwise hear the phone and answer itself. */
-function readAloud(text: string, lang: SpeechLang, queue = false): void {
+function readAloud(text: string, lang: SpeechLang, queue = false, id?: number): void {
   if (autoOn) {
     autoMic?.pause();
     const now = Date.now();
     spokenLately = [...spokenLately.filter((item) => now - item.at < 20000), { text, at: now }];
   } else if (micWouldHear(lang, hearLang)) listener?.hold();
-  const entry = { lang };
+  const entry = { lang, id };
   const spoke = speakText(text, lang, {
     queue,
     onDone: () => {
       aloud.splice(aloud.indexOf(entry), 1);
+      paintSpeak();
       // A short tail so the last syllable is not heard.
       window.setTimeout(() => {
         if (!aloud.length) autoMic?.resume();
@@ -99,15 +106,17 @@ function readAloud(text: string, lang: SpeechLang, queue = false): void {
       }, autoOn ? 500 : 300);
     },
   });
-  if (spoke) aloud.push(entry);
-  else {
+  if (spoke) {
+    aloud.push(entry);
+    paintSpeak();
+  } else {
     listener?.release();
     if (!aloud.length) autoMic?.resume();
   }
 }
 
 /** Lines waiting to be read: never talk (and close the mic) over someone still speaking. */
-let waiting: { text: string; lang: SpeechLang }[] = [];
+let waiting: { text: string; lang: SpeechLang; id?: number }[] = [];
 let interimAt = 0;
 let waitTimer = 0;
 const INTERIM_STALE = 6000;
@@ -124,17 +133,39 @@ function drainWaiting(): void {
   }
   const lines = waiting;
   waiting = [];
-  for (const line of lines) readAloud(line.text, line.lang, true);
+  for (const line of lines) readAloud(line.text, line.lang, true, line.id);
+}
+
+/** "읽기 멈춤": drop what is being read and everything queued behind it. */
+function stopReading(): void {
+  window.clearTimeout(waitTimer);
+  waiting = [];
+  stopSpeaking();
+  paintSpeak();
+}
+
+/** While reading, the button of the card being read and of the newest card becomes a stop button. */
+function paintSpeak(): void {
+  const newest = cards[cards.length - 1]?.id;
+  for (const button of document.querySelectorAll<HTMLButtonElement>("#log [data-speak]")) {
+    const id = Number(button.dataset.speak);
+    const on = aloud.length > 0 && (id === newest || aloud.some((item) => item.id === id));
+    if (button.classList.contains("is-reading") === on) continue;
+    button.classList.toggle("is-reading", on);
+    const label = on ? "읽기 멈춤" : `${button.dataset.name}로 읽기`;
+    button.setAttribute("aria-label", label);
+    button.innerHTML = `${on ? STOP_ICON : SPEAK_ICON}<span>${label}</span>`;
+  }
 }
 
 /** "끝나면 읽어 주기": always on in auto mode. */
-function autoRead(text: string, lang: SpeechLang): void {
+function autoRead(text: string, lang: SpeechLang, id: number): void {
   if (!autoSpeak && mode !== "auto") return;
   if (mode !== "auto" && lang !== "ko") {
-    readAloud(text, lang);
+    readAloud(text, lang, false, id);
     return;
   }
-  waiting.push({ text, lang });
+  waiting.push({ text, lang, id });
   drainWaiting();
 }
 
@@ -198,7 +229,7 @@ async function fillPatient(card: Card, given?: Given): Promise<void> {
     card.ko = ko;
     card.status = "ready";
     card.error = "";
-    autoRead(ko, "ko");
+    autoRead(ko, "ko", card.id);
   } catch (error) {
     card.status = "error";
     card.error = friendlyError(error);
@@ -217,10 +248,43 @@ function submitPatient(spoken: string, lang: PatientLang = patientLang, given?: 
   void fillPatient(card, given);
 }
 
+/** Show or update one line of a card without redrawing the log. */
+function paintLine(card: Card, selector: string, html: string): void {
+  const line = document.querySelector<HTMLElement>(`[data-card="${card.id}"] ${selector}`);
+  if (!line) return;
+  line.innerHTML = html;
+  line.hidden = !html;
+}
+
+function checkHtml(card: Card): string {
+  return card.check ? `<span class="back-label">번역된 뜻</span> ${escapeHtml(card.check)}` : "";
+}
+
+/** Fill in "번역된 뜻": known for pinned lines, otherwise translated back by Google (not by the model that made it). */
+async function checkMeaning(card: Card, pinned: boolean): Promise<void> {
+  const text = card.text;
+  if (pinned) {
+    card.check = prepare(card.ko).meaning ?? "";
+  } else {
+    try {
+      const back = await translateToKo(text, card.lang);
+      // Cleared or translated again meanwhile.
+      if (card.text !== text || card.status !== "ready") return;
+      card.check = back;
+    } catch {
+      return;
+    }
+  }
+  paintLine(card, ".back", checkHtml(card));
+  // The line makes the card taller: keep the read button in view.
+  if (card === cards[cards.length - 1]) scrollLog();
+}
+
 /** Korean → English/Arabic: fixed phrase, then Gemini, then Google. The reading may follow later. */
 async function fillOther(card: Card, lang: "en" | "ar", given?: Given): Promise<void> {
+  const pinned = fixedPhrase(card.ko, lang);
   try {
-    const known = fixedPhrase(card.ko, lang) ?? given;
+    const known = pinned ?? given;
     let text = known?.text ?? "";
     let reading = known?.reading ?? "";
     if (!text && getGeminiKey()) {
@@ -235,20 +299,20 @@ async function fillOther(card: Card, lang: "en" | "ar", given?: Given): Promise<
     card.reading = reading;
     card.status = "ready";
     card.error = "";
-    autoRead(text, lang);
+    autoRead(text, lang, card.id);
   } catch (error) {
     card.status = "error";
     card.error = friendlyError(error);
   }
   render();
   scrollLog();
+  if (card.status === "ready") void checkMeaning(card, Boolean(pinned));
   if (card.status !== "ready" || card.reading || lang !== "ar") return;
   try {
     const reading = arabicLatinToHangul(await fetchArabicLatin(card.text));
     if (!reading) return;
     card.reading = reading;
-    const line = document.querySelector<HTMLElement>(`[data-card="${card.id}"] .reading`);
-    if (line) line.textContent = reading;
+    paintLine(card, ".reading", escapeHtml(reading));
   } catch {
     /* the translation is still usable without a reading */
   }
@@ -257,8 +321,8 @@ async function fillOther(card: Card, lang: "en" | "ar", given?: Given): Promise<
 async function fill(card: Card, given?: Given): Promise<void> {
   if (card.speaker === "patient") return fillPatient(card, given);
   if (card.lang !== "ja") return fillOther(card, card.lang, given);
+  const prepared = prepare(card.ko);
   try {
-    const prepared = prepare(card.ko);
     let translated = prepared.overrideJa ?? given?.text ?? "";
     if (!translated && getGeminiKey()) {
       try {
@@ -269,18 +333,28 @@ async function fill(card: Card, given?: Given): Promise<void> {
     }
     if (!translated) translated = await translateFromKo(prepared.query, "ja");
     const ja = prepared.overrideJa ? translated : politify(translated, card.ko);
-    const reading = await readingFor(ja);
     card.text = ja;
-    card.reading = reading;
+    card.reading = "";
+    card.readingWait = true;
     card.status = "ready";
     card.error = "";
-    autoRead(ja, "ja");
+    autoRead(ja, "ja", card.id);
   } catch (error) {
     card.status = "error";
     card.error = friendlyError(error);
   }
   render();
   scrollLog();
+  if (card.status !== "ready") return;
+  void checkMeaning(card, Boolean(prepared.overrideJa));
+  // The Japanese is already on screen; a missing reading never hides it.
+  const ja = card.text;
+  const reading = await readingFor(ja).catch(() => (prepared.overrideJa ? "" : (given?.reading ?? "")));
+  if (card.text !== ja) return;
+  card.reading = reading;
+  card.readingWait = false;
+  paintLine(card, ".reading", escapeHtml(reading));
+  if (card === cards[cards.length - 1]) scrollLog();
 }
 
 function submit(korean: string, lang: PatientLang = patientLang, given?: Given): void {
@@ -332,6 +406,7 @@ function retry(id: number): void {
   if (!card) return;
   card.status = "loading";
   card.error = "";
+  card.check = "";
   render();
   void fill(card);
 }
@@ -351,13 +426,14 @@ function speakCard(id: number): void {
   if (lang !== "ja" && voiceMissing(lang)) {
     setToast(`이 폰에 ${name} 음성이 없어 소리가 안 날 수 있습니다. 폰의 글자 읽어주기 설정에서 받아 주세요.`);
   }
-  readAloud(text, lang);
+  readAloud(text, lang, false, id);
 }
 
+const SPEAK_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2L12 18.8V5.2L7.2 9.5H4z" fill="currentColor"/><path d="M15.2 8.2a5 5 0 0 1 0 7.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M17.6 5.8a8 8 0 0 1 0 12.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+const STOP_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5.5" y="5.5" width="13" height="13" rx="2.5" fill="currentColor"/></svg>`;
+
 function speakButton(id: number, name: string): string {
-  return `<button type="button" class="speak" data-speak="${id}" aria-label="${name}로 읽기">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2L12 18.8V5.2L7.2 9.5H4z" fill="currentColor"/><path d="M15.2 8.2a5 5 0 0 1 0 7.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M17.6 5.8a8 8 0 0 1 0 12.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>${name}로 읽기</span>
-        </button>`;
+  return `<button type="button" class="speak" data-speak="${id}" data-name="${name}" aria-label="${name}로 읽기">${SPEAK_ICON}<span>${name}로 읽기</span></button>`;
 }
 
 function scrollLog(): void {
@@ -387,7 +463,7 @@ function hintText(): string {
     if (autoError) return autoError;
     if (!getGeminiKey()) return "동시통역은 Gemini 키가 필요합니다. 설정에서 넣어 주세요.";
     if (!autoOn) return `한국어와 ${LANGS[patientLang].name}를 알아서 구분해 통역하고 읽어 줍니다.`;
-    if (aloud.length) return "읽어 주는 중에는 듣지 않습니다. 끝난 뒤 말해 주세요.";
+    if (aloud.length) return "읽어 주는 중에는 듣지 않습니다. ‘읽기 멈춤’을 누르면 바로 듣습니다.";
     return "한 사람씩 말하고 잠깐 쉬면 바로 통역합니다.";
   }
   if (wakeMode === "unsupported" && listening === "listening") {
@@ -529,11 +605,13 @@ function renderCards(): void {
       return `<article class="card${newest}" data-card="${card.id}">
         ${speakButton(card.id, name)}
         <p class="ja" lang="${card.lang}" dir="${dir}">${escapeHtml(card.text)}</p>
-        <p class="reading">${escapeHtml(card.reading)}</p>
+        <p class="reading">${card.readingWait ? `<span class="reading-wait">발음 준비 중…</span>` : escapeHtml(card.reading)}</p>
         <p class="ko">${escapeHtml(card.ko)}</p>
+        <p class="back"${card.check ? "" : " hidden"}>${checkHtml(card)}</p>
       </article>`;
     })
     .join("");
+  paintSpeak();
 }
 
 function render(): void {
@@ -572,14 +650,7 @@ export function startApp(): void {
 
   const presetRow = document.querySelector<HTMLElement>("#presets");
   if (presetRow) {
-    presetRow.innerHTML = PRESET_GROUPS.map(
-      (group) =>
-        `<div class="preset-group"><p class="preset-title">${escapeHtml(group)}</p><div class="preset-chips">` +
-        PRESETS.filter((preset) => preset.group === group)
-          .map((preset) => `<button type="button" class="chip" data-preset="${escapeHtml(preset.ko)}">${escapeHtml(preset.ko)}</button>`)
-          .join("") +
-        `</div></div>`,
-    ).join("");
+    drawPhrases();
     presetRow.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-preset]");
       if (!button) return;
@@ -599,6 +670,10 @@ export function startApp(): void {
     const card = target.closest<HTMLElement>("[data-card]");
     const id = speakButton?.dataset.speak ?? card?.dataset.card;
     if (!id) return;
+    if (speakButton?.classList.contains("is-reading")) {
+      stopReading();
+      return;
+    }
     speakCard(Number(id));
   });
 
@@ -760,6 +835,12 @@ export function startApp(): void {
     scrollLog();
   };
   setupSettings(changeLang);
+  setupPhraseEditor();
+  setupAnswers({
+    lang: () => patientLang,
+    onOpen: unlockSpeech,
+    onAnswer: ({ text, ko, lang }) => submitPatient(text, lang, { text: ko, reading: "" }),
+  });
   const clear = document.querySelector<HTMLButtonElement>("#clear");
   clear?.addEventListener("click", () => {
     if (!cards.length) return;
@@ -773,7 +854,7 @@ export function startApp(): void {
       return;
     }
     cards = [];
-    waiting = [];
+    stopReading();
     clearArmed = false;
     clear.textContent = "기록 지우기";
     render();
@@ -804,6 +885,73 @@ export function startApp(): void {
     if (cards.length) scrollLog();
   });
   render();
+}
+
+/** The "자주 쓰는 말" panel: favourites first, then the groups. */
+function drawPhrases(): void {
+  const row = document.querySelector<HTMLElement>("#presets");
+  if (!row) return;
+  row.innerHTML = phraseGroups(loadPhrases())
+    .map(
+      ({ title, items }) =>
+        `<div class="preset-group"><p class="preset-title">${escapeHtml(title)}</p><div class="preset-chips">` +
+        items.map((ko) => `<button type="button" class="chip" data-preset="${escapeHtml(ko)}">${escapeHtml(ko)}</button>`).join("") +
+        `</div></div>`,
+    )
+    .join("");
+}
+
+function setupPhraseEditor(): void {
+  const dialog = document.querySelector<HTMLDialogElement>("#phrase-editor");
+  const list = document.querySelector<HTMLElement>("#phrase-list");
+  const form = document.querySelector<HTMLFormElement>("#phrase-form");
+  const input = document.querySelector<HTMLInputElement>("#phrase-input");
+  const note = document.querySelector<HTMLElement>("#phrase-note");
+  const reset = document.querySelector<HTMLButtonElement>("#phrase-reset");
+  if (!dialog || !list || !form || !input || !note || !reset) return;
+  let store = loadPhrases();
+  const draw = () => {
+    const hidden = store.hidden.length;
+    reset.hidden = !hidden;
+    reset.textContent = `지운 기본 문구 ${hidden}개 되돌리기`;
+    list.innerHTML = visiblePhrases(store)
+      .map((ko) => {
+        const fav = store.favs.includes(ko);
+        const text = escapeHtml(ko);
+        return `<li><button type="button" class="pe-star${fav ? " is-on" : ""}" data-fav="${text}" aria-pressed="${fav}" aria-label="${text} 즐겨찾기">${fav ? "★" : "☆"}</button><span class="pe-text">${text}${isCustom(store, ko) ? `<small>내 문구</small>` : ""}</span><button type="button" class="pe-del" data-del="${text}" aria-label="${text} 지우기">지우기</button></li>`;
+      })
+      .join("");
+  };
+  const change = (next: typeof store, message = "") => {
+    const saved = savePhrases(next);
+    store = next;
+    note.textContent = saved ? message : "이 폰에 저장하지 못했습니다. 앱을 닫으면 사라집니다.";
+    draw();
+    drawPhrases();
+  };
+  document.querySelector<HTMLButtonElement>("#edit-phrases")?.addEventListener("click", () => {
+    store = loadPhrases();
+    note.textContent = "";
+    draw();
+    dialog.showModal();
+    list.scrollTop = 0;
+  });
+  document.querySelector<HTMLButtonElement>("#phrase-close")?.addEventListener("click", () => dialog.close());
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const { next, message, added } = addPhrase(store, normalize(input.value));
+    if (added) input.value = "";
+    change(next, message);
+    if (added) list.scrollTop = 0;
+  });
+  list.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const fav = target.closest<HTMLElement>("[data-fav]")?.dataset.fav;
+    const del = target.closest<HTMLElement>("[data-del]")?.dataset.del;
+    if (fav) change(toggleFavorite(store, fav));
+    else if (del) change(removePhrase(store, del), `‘${del}’ 지웠습니다.`);
+  });
+  reset.addEventListener("click", () => change(resetPhrases(store), "기본 문구를 되돌렸습니다."));
 }
 
 declare global {
@@ -928,7 +1076,7 @@ function setupSettings(changeLang: (lang: PatientLang) => void): void {
     save.disabled = true;
     showState("키 확인 중…");
     try {
-      const ja = await translateWithGemini("엉덩이 들어보세요", key);
+      const ja = await translateWithGemini("엉덩이 들어보세요", key, 12000);
       setGeminiKey(key);
       showState(`저장 완료. 테스트: ${ja}`);
     } catch (error) {

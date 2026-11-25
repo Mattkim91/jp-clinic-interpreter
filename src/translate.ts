@@ -1,12 +1,16 @@
 import type { PatientLang } from "./lang";
 import { cleanJa } from "./polite";
 
-const TIMEOUT_MS = 8000;
+const TIMEOUT_MS = 5000;
+/** Whole time for one sentence, retries included. */
+const BUDGET_MS = 10000;
 
-async function getJson(url: string): Promise<unknown> {
+async function getJson(url: string, deadline = Date.now() + TIMEOUT_MS): Promise<unknown> {
+  const left = deadline - Date.now();
+  if (left < 300) throw new Error("연결 시간 초과");
   const response = await fetch(url, {
     headers: { Accept: "application/json,text/plain,*/*" },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(Math.min(TIMEOUT_MS, left)),
   });
   if (!response.ok) throw new Error(`번역 서버 오류 (${response.status})`);
   const text = await response.text();
@@ -51,18 +55,18 @@ function findRomaji(data: unknown): string | null {
   return null;
 }
 
-async function translateClients5(q: string, tl: PatientLang): Promise<string> {
+async function translateClients5(q: string, tl: PatientLang, deadline: number): Promise<string> {
   const url = `https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=ko&tl=${tl}&q=${q}`;
-  return parseClients5(await getJson(url));
+  return parseClients5(await getJson(url, deadline));
 }
 
-async function translateGtx(q: string, tl: PatientLang): Promise<string> {
+async function translateGtx(q: string, tl: PatientLang, deadline: number): Promise<string> {
   const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${tl}&dt=t&dt=rm&dj=1&q=${q}`;
   try {
-    return parseGtx(await getJson(url));
+    return parseGtx(await getJson(url, deadline));
   } catch {
     const raw = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=${tl}&dt=t&dt=rm&q=${q}`;
-    return parseGtx(await getJson(raw));
+    return parseGtx(await getJson(raw, deadline));
   }
 }
 
@@ -73,11 +77,12 @@ function sleep(ms: number) {
 /** Keyless Korean → patient language. clients5 first, then the public gtx endpoint. */
 export async function translateFromKo(korean: string, lang: PatientLang): Promise<string> {
   const q = encodeURIComponent(korean);
-  const attempts = [translateClients5, translateClients5, translateGtx, translateGtx];
+  const attempts = [translateClients5, translateGtx, translateClients5, translateGtx];
+  const deadline = Date.now() + BUDGET_MS;
   let last: unknown;
-  for (let i = 0; i < attempts.length; i++) {
+  for (let i = 0; i < attempts.length && Date.now() < deadline - 300; i++) {
     try {
-      const raw = await attempts[i](q, lang);
+      const raw = await attempts[i](q, lang, deadline);
       const out = lang === "ja" ? cleanJa(raw) : raw.replace(/\s+/g, " ").trim();
       if (out && out !== korean.trim()) return out;
       last = new Error("빈 번역");
@@ -93,15 +98,18 @@ export async function translateFromKo(korean: string, lang: PatientLang): Promis
 /** Keyless patient language → Korean via the public Google endpoints. No politify. */
 export async function translateToKo(spoken: string, lang: PatientLang): Promise<string> {
   const q = encodeURIComponent(spoken);
+  const deadline = Date.now() + BUDGET_MS;
   const attempts = [
-    async () => parseGtx(await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${lang}&tl=ko&dt=t&dj=1&q=${q}`)),
-    async () => parseClients5(await getJson(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${lang}&tl=ko&q=${q}`)),
-    async () => parseGtx(await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${lang}&tl=ko&dt=t&q=${q}`)),
+    async () => parseGtx(await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${lang}&tl=ko&dt=t&dj=1&q=${q}`, deadline)),
+    async () => parseClients5(await getJson(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=${lang}&tl=ko&q=${q}`, deadline)),
+    async () => parseGtx(await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${lang}&tl=ko&dt=t&q=${q}`, deadline)),
   ];
   let last: unknown;
-  for (let i = 0; i < attempts.length; i++) {
+  for (let i = 0; i < attempts.length && Date.now() < deadline - 300; i++) {
     try {
-      const ko = (await attempts[i]()).replace(/\s+/g, " ").trim();
+      let ko = (await attempts[i]()).replace(/\s+/g, " ").trim();
+      // Google takes 息を吸う (breathe in) for smoking.
+      if (lang === "ja" && /息を(大きく|深く|ゆっくり)?吸/.test(spoken)) ko = ko.replace(/피우/g, "들이마시").replace(/피워/g, "들이마셔");
       if (ko && ko !== spoken.trim()) return ko;
       last = new Error("빈 번역");
     } catch (error) {

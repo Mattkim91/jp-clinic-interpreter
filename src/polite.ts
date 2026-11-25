@@ -38,9 +38,14 @@ export function isNegativeCommand(ko: string): boolean {
   return /(지\s*마세요|지\s*마십시오|지\s*말아|지\s*마|마세요|마십시오|말아\s*주세요)\s*$/.test(ko.trim());
 }
 
+/** "아프세요" and the like: asks how the patient feels. Speech recognition leaves the question mark out. */
+export function asksCondition(ko: string): boolean {
+  return /(아프|어지러우|힘드|피곤하|괜찮으|불편하|저리|시리|결리|무거우|뻣뻣하|답답하|숨(?:이)?\s*차|가쁘|추우|더우|졸리|메스꺼우|무서우|어떠|(?:이|가|은|는|통증|느낌)\s*있으|없으|않으|느껴지)\s*(세요|셔요|십니까)[\s.!?~]*$/.test(ko.trim());
+}
+
 export function isCommand(ko: string): boolean {
   const s = ko.trim();
-  if (/[?？]\s*$/.test(s)) return false;
+  if (/[?？]\s*$/.test(s) || asksCondition(s)) return false;
   if (/(까요|나요|습니까|인가요|는지요|는지)\s*$/.test(s)) return false;
   if (isNegativeCommand(s)) return true;
   return /(세요|십시오|주세요|줘요|합시다|해보세요|바랍니다|주십시오)\s*$/.test(s);
@@ -117,7 +122,8 @@ function alreadyPolite(s: string): boolean {
 export function politify(ja: string, ko: string): string {
   const s = cleanJa(ja);
   if (!s) return s;
-  if (!isCommand(ko)) return s;
+  // A translation that came back as a question is never made into an order.
+  if (/[?？]\s*$/.test(ja.trim()) || !isCommand(ko)) return s;
   if (alreadyPolite(s)) return s;
   if (isNegativeCommand(ko)) return toNegativeRequest(s);
   if (/ない$/.test(s)) return s + "でください";
