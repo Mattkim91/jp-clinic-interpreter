@@ -369,3 +369,8 @@ h1 {
 .voice-choice { display: flex; gap: 20px; font-size: 1.1rem; margin: 4px 0; }
 .voice-choice input { width: 22px; height: 22px; vertical-align: middle; accent-color: var(--green); }
 .settings h2 + .voice-choice { margin-bottom: 2px; }
+.voice-row { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 4px; font-size: 1rem; }
+.voice-row select { font-size: 1rem; padding: 10px; border-radius: 10px; border: 1px solid #ccc; max-width: 100%; }
+.voice-row input[type="range"] { width: 100%; height: 32px; }
+#test-voice { margin-top: 6px; }
+.voice-test { background: #fff; color: var(--green); border: 2px solid var(--green); border-radius: 12px; padding: 10px 16px; font-weight: 700; font-size: 1rem; }

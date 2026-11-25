@@ -3,7 +3,7 @@ import { detectPlatform } from "./platform";
 let unlocked = false;
 let resumeHack = 0;
 
-function japaneseVoices(): SpeechSynthesisVoice[] {
+export function japaneseVoices(): SpeechSynthesisVoice[] {
   const synth = window.speechSynthesis;
   if (!synth) return [];
   return synth.getVoices().filter((voice) => voice.lang.toLowerCase().startsWith("ja"));
@@ -37,6 +37,56 @@ function matchFirst(voices: SpeechSynthesisVoice[], patterns: RegExp[], avoid: R
     if (found) return found;
   }
   return null;
+}
+
+function prefKey(gender: VoiceGender, what: "voice" | "pitch"): string {
+  return `chiryo.${what}.${gender}`;
+}
+
+/** Voice name the user picked for this gender ("" = automatic). */
+export function getChosenVoice(gender: VoiceGender): string {
+  try {
+    return localStorage.getItem(prefKey(gender, "voice")) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function setChosenVoice(gender: VoiceGender, name: string): void {
+  try {
+    localStorage.setItem(prefKey(gender, "voice"), name);
+  } catch {
+    /* storage blocked */
+  }
+}
+
+/** Pitch the user set for this gender, or null when untouched. */
+export function getChosenPitch(gender: VoiceGender): number | null {
+  try {
+    const raw = localStorage.getItem(prefKey(gender, "pitch"));
+    const value = raw === null ? NaN : Number(raw);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setChosenPitch(gender: VoiceGender, pitch: number): void {
+  try {
+    localStorage.setItem(prefKey(gender, "pitch"), String(pitch));
+  } catch {
+    /* storage blocked */
+  }
+}
+
+/** Voice + pitch actually used for the current gender setting. */
+export function resolveVoice(gender: VoiceGender = getVoiceGender()): { voice: SpeechSynthesisVoice | null; pitch: number; exact: boolean } {
+  const chosenName = getChosenVoice(gender);
+  const chosen = chosenName ? japaneseVoices().find((voice) => voice.name === chosenName) ?? null : null;
+  const picked = chosen ? { voice: chosen, exact: true } : pickJapaneseVoice(gender);
+  const userPitch = getChosenPitch(gender);
+  const pitch = userPitch ?? (picked.exact ? 1 : gender === "male" ? 0.6 : 1.25);
+  return { ...picked, pitch };
 }
 
 /** Pick a Japanese voice of the wanted gender; `exact` is false when we had to fall back to another voice. */
@@ -86,9 +136,8 @@ export function speakJapanese(text: string): boolean {
   utterance.lang = "ja-JP";
   utterance.rate = 0.82;
   const gender = getVoiceGender();
-  const { voice, exact } = pickJapaneseVoice(gender);
-  // No real voice of that gender on this phone: shift the pitch instead.
-  utterance.pitch = exact ? 1 : gender === "male" ? 0.6 : 1.25;
+  const { voice, pitch } = resolveVoice(gender);
+  utterance.pitch = pitch;
   if (voice) utterance.voice = voice;
   if (synth.speaking) synth.cancel();
   synth.speak(utterance);
