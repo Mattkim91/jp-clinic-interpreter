@@ -1,6 +1,6 @@
 # 치료 통역 (jp-clinic-interpreter) 인수인계 문서
 
-> 마지막 업데이트: 2026-11-25 · 현재 버전 **v2.8**
+> 마지막 업데이트: 2026-11-26 · 현재 버전 **v2.9**
 > 이 문서 하나만 읽으면 새 Claude 세션이 이 앱을 이어서 개발할 수 있도록 정리했습니다.
 
 ---
@@ -16,7 +16,7 @@ claude.ai에서는 이 `HANDOFF.md` 파일도 함께 첨부하거나, 저장소�
 
 - 저장소: https://github.com/Mattkim91/jp-clinic-interpreter
 - 실제 사이트: https://mattkim91.github.io/jp-clinic-interpreter/
-- 현재 버전: v2.8
+- 현재 버전: v2.9
 - 저장소 루트의 HANDOFF.md 에 목적, 파일 구조, 튜닝된 값, 버전 기록, 내 취향과 결정 사항이 모두 정리돼 있어. 먼저 그 파일을 끝까지 읽고 시작해 줘.
 
 작업 규칙:
@@ -96,7 +96,7 @@ claude.ai에서는 이 `HANDOFF.md` 파일도 함께 첨부하거나, 저장소�
 
 - `index.html`: 화면 뼈대. 헤더(`치료 통역 <span class="app-version">v2.4</span>`, 설정/기록 지우기), 설정 대화상자, `#log`(카드), `#interim`(듣는 중 글자), `.dock` 안에 `.phrases-panel`(자주 쓰는 말)과 `.controls`(입력칸, 끝나면 읽어 주기, 단방향/양방향, 안내 문구, 마이크).
 - `public/manifest.webmanifest`: PWA 정보(이름 "치료 통역").
-- `public/sw.js`: 서비스 워커. 발음 사전(`/kuromoji-dict/`)은 캐시 우선, 나머지는 네트워크 우선(새 버전이 바로 반영됨). 캐시 이름 `clinic-ja-v1`.
+- `public/sw.js`: 서비스 워커. 발음 사전(`/kuromoji-dict/`)은 캐시 우선, 나머지는 네트워크 우선(새 버전이 바로 반영됨). 캐시 이름 `clinic-ja-v1`. 같은 주소(`mattkim91.github.io`)의 다른 앱 캐시를 지우지 않도록 `clinic-ja-` 로 시작하는 옛 캐시만 지움(v2.9).
 - `public/icons/`, `public/silence.mp4`(화면 켜 두기용 무음 영상).
 - `vendor/kuromoji-dict/`: 일본어 사전(약 18MB, gz). `vite.config.ts` 의 플러그인이 빌드 때 `dist/kuromoji-dict/` 로 복사하고 개발 서버에서도 제공합니다.
 - `tests/`: `hangul`, `platform`, `polite`, `prepare`, `reading`, `speech` 테스트 (현재 31개 통과).
@@ -233,6 +233,7 @@ git -c user.name="Mattkim91" -c user.email="129262464+Mattkim91@users.noreply.gi
 
 | v2.7 | **자동 모드**: 버튼 없이 언어를 구분해 바로 통역·읽기 (Gemini 키 필요). |
 | v2.8 | "자동" 이름을 **"동시통역"** 으로 변경 (동작 변화 없음, 좁은 폰에서 모드 버튼 여백 조정). |
+| v2.9 | 서비스 워커가 다른 앱(환자 평가, 외국인 연수자 가이드)의 오프라인 저장본을 지우던 문제 수정. 화면 변화 없음. |
 
 모든 버전에 `vX.Y` 태그가 있습니다 (`git tag -l`).
 
