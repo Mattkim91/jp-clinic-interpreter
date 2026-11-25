@@ -64,8 +64,12 @@ function zlibJsThis(): Plugin {
   };
 }
 
+// Local dev stays relative. GitHub Pages sets VITE_BASE=/jp-clinic-interpreter/
+// so scripts, the dictionary, and the service worker resolve under that subpath.
+const base = process.env.VITE_BASE || "./";
+
 export default defineConfig({
-  base: "./",
+  base,
   plugins: [zlibJsThis(), kuromojiDict()],
   resolve: {
     alias: { path: path.join(root, "src/shims/path.js") },

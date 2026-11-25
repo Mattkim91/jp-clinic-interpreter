@@ -4,6 +4,7 @@
   "description": "한국어로 말하면 환자에게 일본어로 보여 주는 물리치료 통역",
   "start_url": "./",
   "scope": "./",
+  "id": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f4f0e8",

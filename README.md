@@ -17,11 +17,9 @@ The microphone only works in a secure context. `localhost` counts. A phone openi
 
 ## Deploy
 
-```bash
-npm run build
-```
+`.github/workflows/pages.yml` builds with `VITE_BASE=/jp-clinic-interpreter/` and publishes `dist/` to GitHub Pages. The project site is `https://mattkim91.github.io/jp-clinic-interpreter/` once Pages is set to **GitHub Actions**.
 
-Publish the `dist/` folder to any static host (GitHub Pages, Netlify, Cloudflare Pages). Paths are relative, so a project site such as `https://user.github.io/clinic-ja/` works without a base-path change. The site must be HTTPS or the browser will refuse the microphone.
+Local `npm run dev` and `npm run build` keep a relative base, so the same files also work at the root of any other static host. The microphone needs HTTPS.
 
 On Android, use the browser menu and choose “Add to Home screen” or “Install app”. On iPhone, open the site in Safari, tap Share, then “Add to Home Screen”.
 
