@@ -219,7 +219,7 @@ function renderCards(): void {
       }
       return `<article class="card${newest}" data-card="${card.id}">
         <button type="button" class="speak" data-speak="${card.id}" aria-label="일본어로 읽기">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2L12 18.8V5.2L7.2 9.5H4z" fill="currentColor"/><path d="M15.2 8.2a5 5 0 0 1 0 7.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M17.6 5.8a8 8 0 0 1 0 12.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.2L12 18.8V5.2L7.2 9.5H4z" fill="currentColor"/><path d="M15.2 8.2a5 5 0 0 1 0 7.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M17.6 5.8a8 8 0 0 1 0 12.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>일본어로 읽기</span>
         </button>
         <p class="ja" lang="ja">${escapeHtml(card.ja)}</p>
         <p class="reading">${escapeHtml(card.reading)}</p>

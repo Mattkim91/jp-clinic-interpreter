@@ -396,7 +396,9 @@ h1 {
   flex-direction: column;
   justify-content: center;
 }
-.log .card .speak { top: 16px; }
+.log .card .speak, .card .speak { position: absolute; top: auto; left: 14px; right: 14px; bottom: 14px; width: auto; height: 56px; border-radius: 14px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 1.05rem; font-weight: 700; }
+.card { padding: 16px 16px 84px 16px; }
+.card .speak svg { width: 28px; height: 28px; }
 /* Frequent phrases: many visible at once, scroll vertically. */
 .presets {
   display: block;
