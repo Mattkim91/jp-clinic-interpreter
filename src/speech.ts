@@ -23,7 +23,7 @@ export function endsSentence(text: string): boolean {
 }
 
 /** Silence (ms) to wait before translating: short once a sentence ending is heard, long otherwise. */
-export const PAUSE_AFTER_ENDING = 1000;
+export const PAUSE_AFTER_ENDING = 700;
 export const PAUSE_WITHOUT_ENDING = 3000;
 
 export function flushDelay(text: string): number {
