@@ -32,7 +32,9 @@ function setAudioSession(type: string): void {
 }
 
 export function createAutoMic(options: {
-  onSegment: (wav: string) => void;
+  onSegment: (wav: string, info: { draftHolds: boolean; quietMs: number }) => void;
+  /** Probably the end of what is being said: worth sending ahead. */
+  onDraft: (wav: string) => void;
   onSpeaking: (speaking: boolean) => void;
   /** The microphone was taken away (phone call, unplugged, ...). */
   onLost: () => void;
@@ -91,9 +93,12 @@ export function createAutoMic(options: {
             options.onLost();
           };
         }
+        const wav = (samples: Float32Array) =>
+          toBase64(encodeWav(downsample(samples, context.sampleRate, RATE), Math.min(RATE, context.sampleRate)));
         segmenter = createSegmenter({
           sampleRate: context.sampleRate,
-          onSegment: (samples) => options.onSegment(toBase64(encodeWav(downsample(samples, context.sampleRate, RATE), Math.min(RATE, context.sampleRate)))),
+          onSegment: (samples, info) => options.onSegment(wav(samples), info),
+          onDraft: (samples) => options.onDraft(wav(samples)),
           onSpeaking: options.onSpeaking,
         });
         const source = context.createMediaStreamSource(media);

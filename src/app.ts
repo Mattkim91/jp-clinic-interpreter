@@ -12,7 +12,7 @@ import { hangulFromTokens } from "./reading";
 import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakText, stopSpeaking, unlockSpeech, voiceMissing, voicesFor, type VoiceGender } from "./speak";
 import { createListener, type Listener, type ListenState, type SpeechLang } from "./speech";
 import { fetchArabicLatin, fetchJaRomaji, translateFromKo, translateToKo } from "./translate";
-import { getGeminiKey, interpretAudio, setGeminiKey, translateToKoWithGemini, translateToWithGemini, translateWithGemini } from "./gemini";
+import { getGeminiKey, interpretAudio, setGeminiKey, translateToKoWithGemini, translateToWithGemini, translateWithGemini, warmGemini } from "./gemini";
 import { loadTokenizer, type Tokenizer } from "./tokenizer";
 import { isEcho, type Turn } from "./turns";
 import { createWake, type WakeMode } from "./wake";
@@ -103,7 +103,7 @@ function readAloud(text: string, lang: SpeechLang, queue = false, id?: number): 
         if (!aloud.length) autoMic?.resume();
         if (mode === "auto") renderChrome();
         if (!aloud.some((item) => micWouldHear(item.lang, hearLang))) listener?.release();
-      }, autoOn ? 500 : 300);
+      }, 300);
     },
   });
   if (spoke) {
@@ -119,16 +119,19 @@ function readAloud(text: string, lang: SpeechLang, queue = false, id?: number): 
 let waiting: { text: string; lang: SpeechLang; id?: number }[] = [];
 let interimAt = 0;
 let waitTimer = 0;
+let waitingSince = 0;
 const INTERIM_STALE = 6000;
+/** Auto mode: noise can look like someone talking, so a translation never waits long for it. */
+const AUTO_WAIT = 2000;
 
 function drainWaiting(): void {
   window.clearTimeout(waitTimer);
   if (!waiting.length) return;
   const talking = autoOn
-    ? autoHeard && Date.now() - autoSince < INTERIM_STALE
+    ? autoHeard && Date.now() - Math.max(autoSince, waitingSince) < AUTO_WAIT
     : interim && hearLang !== "ko" && Date.now() - interimAt < INTERIM_STALE;
   if (talking) {
-    waitTimer = window.setTimeout(drainWaiting, 300);
+    waitTimer = window.setTimeout(drainWaiting, autoOn ? 100 : 300);
     return;
   }
   const lines = waiting;
@@ -165,6 +168,7 @@ function autoRead(text: string, lang: SpeechLang, id: number): void {
     readAloud(text, lang, false, id);
     return;
   }
+  if (!waiting.length) waitingSince = Date.now();
   waiting.push({ text, lang, id });
   drainWaiting();
 }
@@ -377,19 +381,60 @@ function autoErrorText(error: unknown): string {
   return "방금 한 말을 통역하지 못했습니다. 다시 말해 주세요.";
 }
 
-function hearRecording(wav: string): void {
+/** Request sent at the first short pause, before we know the sentence is over. */
+let draft: { answer: Promise<Turn[]>; stop: AbortController; lang: PatientLang } | null = null;
+/** After a usage-limit error nothing is sent ahead for a while. */
+let noDraftUntil = 0;
+/** Voice stopped → reading starts, for the last sentence. */
+let autoDelay = 0;
+
+function dropDraft(): void {
+  draft?.stop.abort();
+  draft = null;
+}
+
+function draftRecording(wav: string): void {
+  dropDraft();
+  if (!autoOn || Date.now() < noDraftUntil) return;
+  const stop = new AbortController();
+  const answer = interpretAudio(wav, patientLang, undefined, stop.signal);
+  answer.catch(() => {});
+  draft = { answer, stop, lang: patientLang };
+}
+
+function isLimit(error: unknown): boolean {
+  const limited = (error as { status?: number } | undefined)?.status === 429;
+  if (limited) noDraftUntil = Date.now() + 60000;
+  return limited;
+}
+
+function hearRecording(wav: string, info: { draftHolds: boolean; quietMs: number }): void {
   const lang = patientLang;
+  const stoppedAt = Date.now() - info.quietMs;
+  const ahead = info.draftHolds && draft?.lang === lang ? draft.answer : null;
+  if (!ahead) dropDraft();
+  draft = null;
   autoBusy += 1;
   renderChrome();
-  const answer = interpretAudio(wav, lang).then(
+  const asked = ahead
+    ? ahead.catch((error: unknown) => {
+        if (isLimit(error) || (error as { badKey?: boolean }).badKey) throw error;
+        return interpretAudio(wav, lang);
+      })
+    : interpretAudio(wav, lang);
+  const answer = asked.then(
     (turns): { turns: Turn[]; error: string } => ({ turns, error: "" }),
-    (error: unknown) => ({ turns: [], error: autoErrorText(error) }),
+    (error: unknown) => {
+      isLimit(error);
+      return { turns: [], error: autoErrorText(error) };
+    },
   );
   turnOrder = turnOrder.then(async () => {
     const { turns, error } = await answer;
     autoBusy -= 1;
     autoError = error;
     const now = Date.now();
+    if (turns.length) autoDelay = now - stoppedAt;
     const spoken = spokenLately.filter((item) => now - item.at < 20000).map((item) => item.text);
     for (const turn of turns) {
       if (isEcho(turn.heard, spoken)) continue;
@@ -464,7 +509,7 @@ function hintText(): string {
     if (!getGeminiKey()) return "동시통역은 Gemini 키가 필요합니다. 설정에서 넣어 주세요.";
     if (!autoOn) return `한국어와 ${LANGS[patientLang].name}를 알아서 구분해 통역하고 읽어 줍니다.`;
     if (aloud.length) return "읽어 주는 중에는 듣지 않습니다. ‘읽기 멈춤’을 누르면 바로 듣습니다.";
-    return "한 사람씩 말하고 잠깐 쉬면 바로 통역합니다.";
+    return `한 사람씩 말하고 잠깐 쉬면 바로 통역합니다.${autoDelay ? ` (방금 ${(autoDelay / 1000).toFixed(1)}초)` : ""}`;
   }
   if (wakeMode === "unsupported" && listening === "listening") {
     return "화면 켜 두기를 지원하지 않습니다. 자동 잠금을 꺼 주세요.";
@@ -700,11 +745,13 @@ export function startApp(): void {
 
   autoMic = createAutoMic({
     onSegment: hearRecording,
+    onDraft: draftRecording,
     onSpeaking: (speaking) => {
       autoHeard = speaking;
       if (speaking) {
         autoSince = Date.now();
         autoError = "";
+        warmGemini();
       }
       renderChrome();
       if (!speaking) drainWaiting();
@@ -719,6 +766,8 @@ export function startApp(): void {
   });
   const stopAuto = () => {
     autoMic?.stop();
+    dropDraft();
+    autoDelay = 0;
     autoOn = false;
     autoHeard = false;
     waiting = [];
@@ -749,6 +798,7 @@ export function startApp(): void {
     }
     stopSpeaking();
     autoOn = true;
+    warmGemini();
     listening = "listening";
     hearLang = "ko";
     render();

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { interpretAudio } from "../src/gemini";
 import { isEcho, parseTurns } from "../src/turns";
-import { createSegmenter, downsample, encodeWav, MAX_MS, toBase64 } from "../src/vad";
+import { createSegmenter, downsample, encodeWav, MAX_MS, SILENCE_MS, toBase64 } from "../src/vad";
 
 const RATE = 16000;
 
@@ -37,7 +37,8 @@ describe("auto mode: cutting speech out of the microphone", () => {
     feed(1200, 0.1);
     feed(1500, 0.002);
     assert.equal(pieces.length, 2);
-    assert.ok(pieces[0] >= 2400 && pieces[0] <= 2900, String(pieces[0]));
+    // 300 ms before + 1500 ms of speech + 240 ms after; the rest of the silence is not uploaded.
+    assert.ok(pieces[0] >= 1800 && pieces[0] <= 2150, String(pieces[0]));
     assert.deepEqual(states, [true, false, true, false]);
   });
 
@@ -49,6 +50,60 @@ describe("auto mode: cutting speech out of the microphone", () => {
     feed(800, 0.1);
     feed(1500, 0.002);
     assert.equal(pieces.length, 1);
+  });
+
+  it("sends ahead at the first pause and says whether that still holds", () => {
+    const run = (parts: [number, number][]) => {
+      const log: string[] = [];
+      const segmenter = createSegmenter({
+        sampleRate: RATE,
+        onSegment: (_samples, info) => log.push(`end ${info.draftHolds} ${info.quietMs}`),
+        onDraft: () => log.push("draft"),
+        onSpeaking: () => {},
+      });
+      for (const [ms, level] of parts) segmenter.push(sound(ms, level));
+      return log;
+    };
+    assert.deepEqual(run([[500, 0.002], [1000, 0.1], [1200, 0.002]]), ["draft", `end true ${Math.ceil(SILENCE_MS / 30) * 30}`]);
+    // More was said after the pause: the draft must not be used.
+    assert.deepEqual(run([[500, 0.002], [800, 0.1], [500, 0.002], [400, 0.1], [1200, 0.002]]).map((line) => line.slice(0, 9)), ["draft", "end false"]);
+  });
+
+  it("notices the end of speech over room noise that started meanwhile", () => {
+    const { pieces, feed } = listen();
+    feed(800, 0.002);
+    feed(1200, 0.15);
+    // Louder than the quiet room was, far below the voice.
+    feed(1000, 0.015);
+    assert.equal(pieces.length, 1);
+    assert.ok(pieces[0] < 2200, String(pieces[0]));
+  });
+
+  it("notices the end over a loud steady hum, and does not take the hum for the next speaker", () => {
+    const { pieces, feed } = listen();
+    feed(800, 0.002);
+    feed(1200, 0.15);
+    feed(1300, 0.04);
+    assert.equal(pieces.length, 1);
+    feed(6000, 0.04);
+    assert.equal(pieces.length, 1);
+    feed(1200, 0.2);
+    feed(1300, 0.04);
+    assert.equal(pieces.length, 2);
+  });
+
+  it("does not cut uneven soft speech after a loud word", () => {
+    const { pieces, feed } = listen();
+    feed(500, 0.002);
+    feed(400, 0.2);
+    for (let i = 0; i < 12; i++) {
+      feed(120, 0.07);
+      feed(90, 0.012);
+    }
+    assert.equal(pieces.length, 0);
+    feed(1200, 0.002);
+    assert.equal(pieces.length, 1);
+    assert.ok(pieces[0] > 2800, String(pieces[0]));
   });
 
   it("ignores quiet rooms and short clicks", () => {
@@ -142,6 +197,39 @@ describe("auto mode: request", () => {
     assert.deepEqual(body.contents[0].parts[0].inlineData, { mimeType: "audio/wav", data: "UklGRg==" });
     assert.match(body.systemInstruction.parts[0].text, /English/);
     assert.doesNotMatch(body.systemInstruction.parts[0].text, /Japanese/);
+  });
+
+  it("asks the next model as well when the first is slow, and takes the first answer", async () => {
+    const ok = () =>
+      new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ turns: [{ language: "patient", heard: "膝が痛い", translation: "무릎이 아파요" }] }) }] } }] }));
+    const urls: string[] = [];
+    let aborted = false;
+    globalThis.fetch = ((url: string, init: RequestInit) => {
+      urls.push(url);
+      if (urls.length > 1) return Promise.resolve(ok());
+      return new Promise((_resolve, reject) =>
+        init.signal?.addEventListener("abort", () => {
+          aborted = true;
+          reject(new Error("aborted"));
+        }),
+      );
+    }) as typeof fetch;
+    const started = Date.now();
+    const turns = await interpretAudio("UklGRg==", "ja", "test");
+    assert.equal(turns[0].translation, "무릎이 아파요");
+    assert.equal(urls.length, 2);
+    assert.notEqual(urls[0], urls[1]);
+    assert.equal(aborted, true);
+    assert.ok(Date.now() - started < 4000);
+  });
+
+  it("can be cancelled", async () => {
+    globalThis.fetch = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new Error("aborted"))))) as typeof fetch;
+    const stop = new AbortController();
+    const asked = interpretAudio("UklGRg==", "ja", "test", stop.signal);
+    stop.abort();
+    await assert.rejects(asked);
   });
 
   it("reports the usage limit even when another model fails differently", async () => {

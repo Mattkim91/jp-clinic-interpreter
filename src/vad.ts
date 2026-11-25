@@ -1,7 +1,15 @@
 /** Cuts a live microphone stream into spoken pieces by loudness (auto mode). */
 
-/** Quiet time that ends a spoken piece. */
-export const SILENCE_MS = 900;
+/** Quiet time that ends a spoken piece. Shorter would cut Korean before its sentence-final negation. */
+export const SILENCE_MS = 700;
+/** Quiet time after which the piece is already sent ahead, in case this was the end. */
+export const DRAFT_MS = 360;
+/** Silence kept at the end of what is sent. */
+const TAIL_MS = 240;
+/** Below this share of the voice's own loudness it counts as quiet, so room noise cannot hold a piece open. */
+const QUIET_RATIO = 0.2;
+/** Frames looked at to tell steady noise (even) from a voice (uneven). */
+const STEADY_FRAMES = 12;
 /** A piece is cut here even when nobody pauses. */
 export const MAX_MS = 15000;
 const FRAME_MS = 30;
@@ -36,8 +44,11 @@ function join(frames: Float32Array[]): Float32Array {
 
 export function createSegmenter(options: {
   sampleRate: number;
-  onSegment: (samples: Float32Array) => void;
+  /** `draftHolds`: nothing more was said after the draft. `quietMs`: how long ago the voice stopped. */
+  onSegment: (samples: Float32Array, info: { draftHolds: boolean; quietMs: number }) => void;
   onSpeaking: (speaking: boolean) => void;
+  /** First short pause of a piece (at most once per piece). */
+  onDraft?: (samples: Float32Array) => void;
 }): Segmenter {
   const frameSize = Math.round((options.sampleRate * FRAME_MS) / 1000);
   let rest = new Float32Array(0);
@@ -48,21 +59,42 @@ export function createSegmenter(options: {
   let levels: number[] = [];
   let voiced = 0;
   let quiet = 0;
+  let peak = 0;
+  /** Voiced frames when the draft was handed over, or -1. */
+  let drafted = -1;
 
   const threshold = () => Math.max(MIN_LEVEL, floor * 3);
 
+  /** Even and clearly softer than the voice: a machine or room hum, not speech. */
+  const steady = () => {
+    if (levels.length < STEADY_FRAMES) return false;
+    const last = levels.slice(-STEADY_FRAMES);
+    const top = Math.max(...last);
+    return top < peak * 0.5 && top < Math.min(...last) * 2;
+  };
+
+  const enough = () => voiced * FRAME_MS >= MIN_VOICED_MS;
+  /** Without most of the silence at the end: less to upload. */
+  const trimmed = (frames: Float32Array[]) => join(frames.slice(0, frames.length - Math.max(0, quiet - Math.ceil(TAIL_MS / FRAME_MS))));
+
   const finish = () => {
     const done = piece;
-    const enough = voiced * FRAME_MS >= MIN_VOICED_MS;
+    const send = done && enough() ? trimmed(done) : null;
+    // One or two loud frames are a click, not another word.
+    const info = { draftHolds: drafted >= 0 && voiced - drafted <= 2, quietMs: quiet * FRAME_MS };
+    // What is left when the voice stops is the room: it must not start the next piece.
+    if (done && quiet >= STEADY_FRAMES) floor = Math.max(floor, Math.min(peak * 0.2, ...levels.slice(-STEADY_FRAMES)));
     piece = null;
     levels = [];
     voiced = 0;
     quiet = 0;
+    peak = 0;
+    drafted = -1;
     recent = [];
     loud = [];
     if (!done) return;
     options.onSpeaking(false);
-    if (enough) options.onSegment(join(done));
+    if (send) options.onSegment(send, info);
   };
 
   const frame = (data: Float32Array) => {
@@ -70,11 +102,20 @@ export function createSegmenter(options: {
     if (piece) {
       piece.push(data);
       levels.push(level);
-      if (level > threshold() * 0.6) {
-        quiet = 0;
-        voiced += 1;
+      peak = Math.max(peak * 0.997, level);
+      if (level > Math.max(threshold() * 0.6, peak * QUIET_RATIO)) {
+        if (steady()) {
+          quiet = Math.max(quiet + 1, STEADY_FRAMES);
+        } else {
+          quiet = 0;
+          voiced += 1;
+        }
       } else {
         quiet += 1;
+      }
+      if (drafted < 0 && enough() && quiet * FRAME_MS >= DRAFT_MS && options.onDraft) {
+        drafted = voiced;
+        options.onDraft(trimmed(piece));
       }
       if (quiet * FRAME_MS >= SILENCE_MS) {
         finish();
