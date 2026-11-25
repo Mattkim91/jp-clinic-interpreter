@@ -74,7 +74,7 @@ describe("pinned lines replace only a whole matching sentence", () => {
       assert.equal(isCommand(ko), false, ko);
     }
     for (const ko of ["가만히 있으세요", "뻥 차세요", "당기세요", "앉으세요"]) assert.equal(asksCondition(ko), false, ko);
-    assert.equal(politify("腹部に力を入れると痛みます", "배에 힘 주면 아프세요"), "腹部に力を入れると痛みます");
+    assert.equal(politify("腹部に力を入れると痛みます", "배에 힘 주면 아프세요"), "腹部に力を入れると痛みます？");
     assert.equal(politify("膝を伸ばす？", "무릎 펴세요"), "膝を伸ばす");
   });
 });

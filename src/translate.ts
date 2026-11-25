@@ -74,6 +74,13 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Words Google picks that are wrong in a rehabilitation room. */
+function rehabJa(ja: string, korean: string): string {
+  let out = ja.replace(/緊張を(癒し|緩め|ほぐし|解い)て/g, "力を抜いて").replace(/病気の(足|脚|腕|手|方)/g, "痛い$1");
+  if (/발판/.test(korean)) out = out.replace(/足場/g, "フットレスト");
+  return out;
+}
+
 /** Keyless Korean → patient language. clients5 first, then the public gtx endpoint. */
 export async function translateFromKo(korean: string, lang: PatientLang): Promise<string> {
   const q = encodeURIComponent(korean);
@@ -83,7 +90,7 @@ export async function translateFromKo(korean: string, lang: PatientLang): Promis
   for (let i = 0; i < attempts.length && Date.now() < deadline - 300; i++) {
     try {
       const raw = await attempts[i](q, lang, deadline);
-      const out = lang === "ja" ? cleanJa(raw) : raw.replace(/\s+/g, " ").trim();
+      const out = lang === "ja" ? rehabJa(cleanJa(raw), korean) : raw.replace(/\s+/g, " ").trim();
       if (out && out !== korean.trim()) return out;
       last = new Error("빈 번역");
     } catch (error) {

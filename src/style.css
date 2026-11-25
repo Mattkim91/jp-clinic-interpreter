@@ -676,6 +676,27 @@ h1 { font-size: 1.2rem; color: var(--green); }
 .pe-reset { min-height: 44px; border: 1.5px solid #cdbfa8; border-radius: 10px; background: #fff; color: #4a4239; font-weight: 700; }
 .pe-reset[hidden] { display: none; }
 
+/* v3.2: something in the translation may be wrong */
+/* A long line gets a little smaller so the card, with its warning, stays on one screen. */
+.ja.is-long { font-size: clamp(1.45rem, 6.6vw, 2rem); }
+.presets { max-height: 14vh; max-height: 14dvh; }
+@media (max-height: 700px) { .presets { max-height: 12vh; max-height: 12dvh; } }
+/* Below the text, next to the read button: that end of the card is always in view. */
+.card .warn { margin: 8px 0 0; padding: 8px 12px; border: 2px solid var(--live); border-radius: 12px; background: #fff1ef; color: #8a1a10; font-size: 0.95rem; font-weight: 600; line-height: 1.4; }
+.keep-row { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 1.05rem; }
+.settings .keep-row input { width: 22px; height: 22px; margin: 0; accent-color: var(--green); }
+/* v3.2: phrase list that opens over the cards */
+.panel-title button { display: block; width: 100%; min-height: 40px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; white-space: nowrap; }
+.panel-title small { margin-left: 2px; color: #5c544b; font-size: 0.74rem; font-weight: 600; }
+.presets .chip { min-height: 40px; }
+.phrase-nav { display: none; }
+.phrases-open .log, .phrases-open .hint { display: none; }
+.phrases-open .dock { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 10px; }
+.phrases-open .phrases-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.phrases-open .presets { flex: 1; min-height: 0; max-height: none; }
+.phrases-open .phrase-nav { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; padding: 8px 10px; border-bottom: 1px solid #e6ddce; }
+.phrase-nav button { min-height: 40px; padding: 0 4px; border: 1.5px solid var(--green); border-radius: 10px; background: #fff; color: var(--green); font-size: 0.86rem; font-weight: 700; white-space: nowrap; }
+
 /* Patient answers: full screen, big targets */
 .answers { width: 100vw; max-width: none; height: var(--app-h); max-height: none; margin: 0; border: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); background: #fff8ef; color: #14110e; word-break: keep-all; }
 .answers[open] { display: flex; flex-direction: column; }

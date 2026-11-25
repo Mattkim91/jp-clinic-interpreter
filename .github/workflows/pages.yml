@@ -33,6 +33,10 @@ jobs:
       - name: Install
         run: npm ci
 
+      # A failing test stops the deployment; the site keeps the previous version.
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
         env:

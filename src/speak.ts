@@ -63,7 +63,7 @@ function matchFirst(voices: SpeechSynthesisVoice[], patterns: RegExp[], avoid: R
 }
 
 /** Japanese keeps its original key; other languages get their own. */
-function prefKey(gender: VoiceGender, what: "voice" | "pitch", lang: PatientLang = "ja"): string {
+function prefKey(gender: VoiceGender, what: "voice", lang: PatientLang = "ja"): string {
   return lang === "ja" ? `chiryo.${what}.${gender}` : `chiryo.${what}.${lang}.${gender}`;
 }
 
@@ -84,24 +84,6 @@ export function setChosenVoice(gender: VoiceGender, name: string, lang: PatientL
   }
 }
 
-/** Pitch the user set for this gender, or null when untouched. */
-export function getChosenPitch(gender: VoiceGender): number | null {
-  try {
-    const raw = localStorage.getItem(prefKey(gender, "pitch"));
-    const value = raw === null ? NaN : Number(raw);
-    return Number.isFinite(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-export function setChosenPitch(gender: VoiceGender, pitch: number): void {
-  try {
-    localStorage.setItem(prefKey(gender, "pitch"), String(pitch));
-  } catch {
-    /* storage blocked */
-  }
-}
 
 /** Voice + pitch actually used for the current gender setting. */
 export function resolveVoice(gender: VoiceGender = getVoiceGender(), lang: PatientLang = "ja"): { voice: SpeechSynthesisVoice | null; pitch: number; exact: boolean } {

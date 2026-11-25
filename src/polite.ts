@@ -38,8 +38,30 @@ export function isNegativeCommand(ko: string): boolean {
   return /(지\s*마세요|지\s*마십시오|지\s*말아|지\s*마|마세요|마십시오|말아\s*주세요)\s*$/.test(ko.trim());
 }
 
-/** "아프세요" and the like: asks how the patient feels. Speech recognition leaves the question mark out. */
+/** "드셨어요", "주무셨어요": asks what the patient did. Praise (잘하셨어요, 수고하셨어요) is not a question. */
+function asksPast(ko: string): boolean {
+  return (
+    /(주무셨|드셨|다녀오셨|보셨|넘어지셨|다치셨|받으셨|괜찮으셨|어지러우셨|아프셨|불편하셨|씻으셨|있으셨|없으셨|쉬셨|어떠셨|하셨)(어요|나요|죠|습니까)[\s.!?~]*$/.test(ko) &&
+    !/(잘|수고|고생|열심히|많이|훌륭하게|성공)\s*하셨/.test(ko)
+  );
+}
+
+/** "힘이 안 들어가세요": nobody is told to do a thing with 안/못 in front. */
+function asksCannot(ko: string): boolean {
+  return /(^|\s)(안|못)\s+[가-힣]+(세요|셔요)[\s.!?~]*$/.test(ko);
+}
+
+/** Asked, whether or not speech recognition wrote the question mark. 볼까요/시겠어요 are requests. */
+export function isQuestion(ko: string): boolean {
+  const s = ko.trim();
+  if (/(볼까요|실까요|할까요|시겠어요|실래요|시겠습니까)[\s.!?？~]*$/.test(s)) return false;
+  if (/[?？]\s*$/.test(s)) return true;
+  return asksCondition(s) || /(까요|나요|[습십입합됩납]니까|[인은는던한신]가요|는지요)[\s.!~]*$/.test(s);
+}
+
+/** "아프세요" and the like: asks about the patient. Speech recognition leaves the question mark out. */
 export function asksCondition(ko: string): boolean {
+  if (asksPast(ko.trim()) || asksCannot(ko.trim())) return true;
   return /(아프|어지러우|힘드|피곤하|괜찮으|불편하|저리|시리|결리|무거우|뻣뻣하|답답하|숨(?:이)?\s*차|가쁘|추우|더우|졸리|메스꺼우|무서우|어떠|(?:이|가|은|는|통증|느낌)\s*있으|없으|않으|느껴지)\s*(세요|셔요|십니까)[\s.!?~]*$/.test(ko.trim());
 }
 
@@ -116,17 +138,42 @@ function splitVerb(sentence: string): { prefix: string; verb: string } | null {
 }
 
 function alreadyPolite(s: string): boolean {
-  return /(ください|下さい|なさい|ましょう|ません)$/.test(s);
+  return /(ください|下さい|ましょう|ません|くださいね|ましょうね|でした|です)$/.test(s);
+}
+
+const ICHIDAN_STEMS = /(起き|降り|下り|落ち|閉じ|借り|感じ|信じ|過ぎ|足り|浴び|伸び|[てで]い|^い|[見着寝出似煮])$/;
+const GODAN_TE: Record<string, string> = { い: "って", き: "いて", ぎ: "いで", し: "して", ち: "って", り: "って", み: "んで", び: "んで", に: "んで" };
+
+/** Polite stem (before ます/なさい) → て form; null when unsure. */
+function stemToTe(stem: string): string | null {
+  if (/(でき|あり|られ)$/.test(stem)) return null;
+  if (/行き$/.test(stem)) return `${stem.slice(0, -1)}って`;
+  const last = stem.slice(-1);
+  if (ICHIDAN_STEMS.test(stem) || E_ROW.has(last)) return `${stem}て`;
+  const te = GODAN_TE[last];
+  return te ? stem.slice(0, -1) + te : null;
+}
+
+/** A question shown without any question mark or か reads like a statement. */
+function markQuestion(s: string): string {
+  return /(い|う|く|ぐ|す|つ|ぬ|ぶ|む|る|た|だ|ん)$/.test(s) ? `${s}？` : s;
 }
 
 export function politify(ja: string, ko: string): string {
   const s = cleanJa(ja);
   if (!s) return s;
+  if (isQuestion(ko)) return markQuestion(s);
   // A translation that came back as a question is never made into an order.
   if (/[?？]\s*$/.test(ja.trim()) || !isCommand(ko)) return s;
   if (alreadyPolite(s)) return s;
   if (isNegativeCommand(ko)) return toNegativeRequest(s);
-  if (/ない$/.test(s)) return s + "でください";
+  // "don't" only when the Korean says so: 力が入らない is no order.
+  if (/ない$/.test(s)) return /지\s*(는|도|를)?\s*(말|마)/.test(ko) ? s + "でください" : s;
+  const polite = s.match(/^(.+)(ます|なさい)$/);
+  if (polite) {
+    const te = stemToTe(polite[1]);
+    return te ? `${te}ください` : s;
+  }
   const parts = splitVerb(s);
   if (!parts) return s;
   const te = toTe(parts.verb);
@@ -139,6 +186,7 @@ function toNegativeRequest(s: string): string {
     return s.endsWith("ください") || s.endsWith("下さい") ? s : s + "ください";
   }
   if (/ません$/.test(s)) return s;
+  if (/(ては|では|ちゃ|じゃ)(いけない|ならない)$/.test(s)) return s.replace(/(いけ|なら)ない$/, "$1ません");
   if (/ない$/.test(s)) return s + "でください";
   if (/[くな]$/.test(s) && s.endsWith("な") && splitVerb(s.slice(0, -1))) {
     const stem = s.slice(0, -1);

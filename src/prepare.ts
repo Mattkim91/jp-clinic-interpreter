@@ -1,4 +1,4 @@
-import { asksCondition } from "./polite";
+import { asksCondition, isQuestion } from "./polite";
 
 /**
  * Clinic phrases where a literal translation is unsafe.
@@ -9,7 +9,7 @@ import { asksCondition } from "./polite";
 
 export type Preset = { group: string; ko: string; ja: string };
 
-export const PRESET_GROUPS: string[] = ["인사·상태", "자세 바꾸기", "팔·손", "다리·걷기", "호흡·운동", "칭찬·마무리"];
+export const PRESET_GROUPS: string[] = ["인사·상태", "자세 바꾸기", "팔·손", "다리·걷기", "계단·안전", "호흡·운동", "칭찬·마무리"];
 
 export const PRESETS: Preset[] = [
   { group: "인사·상태", ko: "안녕하세요?", ja: "こんにちは。" },
@@ -20,6 +20,10 @@ export const PRESETS: Preset[] = [
   { group: "인사·상태", ko: "피곤하세요?", ja: "お疲れですか？" },
   { group: "인사·상태", ko: "화장실 가고 싶으세요?", ja: "トイレに行きたいですか？" },
   { group: "인사·상태", ko: "아프면 말씀해 주세요", ja: "痛い場合は教えてください" },
+  { group: "인사·상태", ko: "잘 주무셨어요?", ja: "よく眠れましたか？" },
+  { group: "인사·상태", ko: "약은 드셨어요?", ja: "お薬は飲みましたか？" },
+  { group: "인사·상태", ko: "혈압을 재볼게요", ja: "血圧を測りますね" },
+  { group: "인사·상태", ko: "힘이 안 들어가세요?", ja: "力が入りませんか？" },
   { group: "자세 바꾸기", ko: "옮겨 앉아볼게요", ja: "移って座りましょう" },
   { group: "자세 바꾸기", ko: "제가 도와드릴게요", ja: "お手伝いしますね" },
   { group: "자세 바꾸기", ko: "일어나보세요", ja: "立ってみてください" },
@@ -32,6 +36,9 @@ export const PRESETS: Preset[] = [
   { group: "자세 바꾸기", ko: "앞으로 숙이세요", ja: "前にかがんでください" },
   { group: "자세 바꾸기", ko: "엉덩이 들어보세요", ja: "お尻を上げてください" },
   { group: "자세 바꾸기", ko: "발을 바닥에 붙이세요", ja: "足を床につけてください" },
+  { group: "자세 바꾸기", ko: "턱을 당기세요", ja: "あごを引いてください" },
+  { group: "자세 바꾸기", ko: "배를 내밀지 마세요", ja: "お腹を突き出さないでください" },
+  { group: "자세 바꾸기", ko: "다리를 꼬지 마세요", ja: "足を組まないでください" },
   { group: "팔·손", ko: "팔 들어보세요", ja: "腕を上げてみてください" },
   { group: "팔·손", ko: "약한 쪽 팔을 들어보세요", ja: "弱い方の腕を上げてみてください" },
   { group: "팔·손", ko: "밀어보세요", ja: "押してみてください" },
@@ -54,6 +61,19 @@ export const PRESETS: Preset[] = [
   { group: "다리·걷기", ko: "한 발 앞으로 내딛으세요", ja: "一歩前に出してください" },
   { group: "다리·걷기", ko: "천천히 걸어볼게요", ja: "ゆっくり歩きましょう" },
   { group: "다리·걷기", ko: "넘어지지 않게 잡고 있을게요", ja: "転ばないように支えていますね" },
+  { group: "계단·안전", ko: "계단을 올라갈 때는 안 아픈 다리부터 올리세요", ja: "階段を上るときは、痛くない方の足から上げてください" },
+  { group: "계단·안전", ko: "계단을 내려갈 때는 아픈 다리부터 내리세요", ja: "階段を下りるときは、痛い方の足から下ろしてください" },
+  { group: "계단·안전", ko: "올라갈 때는 강한 다리부터 올리세요", ja: "上るときは、強い方の足から上げてください" },
+  { group: "계단·안전", ko: "내려갈 때는 약한 다리부터 내리세요", ja: "下りるときは、弱い方の足から下ろしてください" },
+  { group: "계단·안전", ko: "지팡이를 먼저 짚으세요", ja: "杖を先についてください" },
+  { group: "계단·안전", ko: "지팡이, 약한 다리, 강한 다리 순서로 걸으세요", ja: "杖、弱い方の足、強い方の足の順に歩いてください" },
+  { group: "계단·안전", ko: "뒤꿈치부터 디디세요", ja: "かかとから足をついてください" },
+  { group: "계단·안전", ko: "서두르지 마세요", ja: "急がないでください" },
+  { group: "계단·안전", ko: "혼자 일어나지 마세요", ja: "一人で立ち上がらないでください" },
+  { group: "계단·안전", ko: "아직 체중을 실으면 안 돼요", ja: "まだ体重をかけないでください" },
+  { group: "계단·안전", ko: "휠체어 브레이크를 잠그세요", ja: "車いすのブレーキをかけてください" },
+  { group: "계단·안전", ko: "발판을 올리세요", ja: "フットレストを上げてください" },
+  { group: "계단·안전", ko: "보조기를 신을게요", ja: "装具をつけますね" },
   { group: "호흡·운동", ko: "숨 크게 쉬세요", ja: "息を大きく吸ってください" },
   { group: "호흡·운동", ko: "깊게 들이쉬고 내쉬세요", ja: "深く息を吸って吐いてください" },
   { group: "호흡·운동", ko: "배에 힘을 주세요", ja: "お腹に力を入れてください" },
@@ -100,8 +120,40 @@ function command(object: string, eo: string, stem: string): RegExp {
   return new RegExp(`${LEAD}${object}(?:(?:${eo})${AFTER_EO}|(?:${stem})${AFTER_STEM})`);
 }
 
+type Pattern = { re: RegExp; ja: string; key: string };
+
+const UP = "(?:올라갈|오를)\\s*때(?:는|에는|엔)?\\s*";
+const DOWN = "(?:내려갈|내려올)\\s*때(?:는|에는|엔)?\\s*";
+const FIRST = "(?:쪽\\s*)?(?:다리|발)(?:부터|를\\s*먼저|을\\s*먼저)\\s*";
+const STEP = "(?:먼저\\s*)?(?:(?:올리|내리|디디|내디디|짚으|올라가|내려가|딛으)(?:세요|셔요|십시오)|(?:올려|내려|디뎌|올라가|짚어)\\s*(?:보세요|주세요|볼게요))[\\s.!]*$";
+
+/** Which leg first on stairs: a wrong one is a fall, so the usual ways of saying it are pinned. */
+const STAIRS: Pattern[] = [
+  {
+    re: new RegExp(`${LEAD}(?:계단(?:을)?\\s*)?${UP}(?:안\\s*아픈|아프지\\s*않은|통증(?:이)?\\s*없는)\\s*${FIRST}${STEP}`),
+    ja: "階段を上るときは、痛くない方の足から上げてください",
+    key: "계단을 올라갈 때는 안 아픈 다리부터 올리세요",
+  },
+  {
+    re: new RegExp(`${LEAD}(?:계단(?:을)?\\s*)?${DOWN}(?:아픈|통증(?:이)?\\s*있는)\\s*${FIRST}${STEP}`),
+    ja: "階段を下りるときは、痛い方の足から下ろしてください",
+    key: "계단을 내려갈 때는 아픈 다리부터 내리세요",
+  },
+  {
+    re: new RegExp(`${LEAD}(?:계단(?:을)?\\s*)?${UP}(?:강한|건강한|좋은|힘\\s*(?:있는|센))\\s*${FIRST}${STEP}`),
+    ja: "上るときは、強い方の足から上げてください",
+    key: "올라갈 때는 강한 다리부터 올리세요",
+  },
+  {
+    re: new RegExp(`${LEAD}(?:계단(?:을)?\\s*)?${DOWN}(?:약한|마비된|힘\\s*없는)\\s*${FIRST}${STEP}`),
+    ja: "下りるときは、弱い方の足から下ろしてください",
+    key: "내려갈 때는 약한 다리부터 내리세요",
+  },
+];
+
 /** `key` names the matching line in phrases.ts for the other patient languages. */
-export const PATTERNS: { re: RegExp; ja: string; key: string }[] = [
+export const PATTERNS: Pattern[] = [
+  ...STAIRS,
   {
     re: command("(?:숨(?:을)?\\s*)?(?:(?:크게|깊게|깊이)\\s*)?(?:숨(?:을)?\\s*)?들이(?:쉬|마시)고\\s*", "내쉬어|내뱉어|뱉어", "내쉬|내뱉|뱉"),
     ja: "深く息を吸って吐いてください",
@@ -125,7 +177,7 @@ export const PATTERNS: { re: RegExp; ja: string; key: string }[] = [
 ];
 
 const BODY =
-  "왼팔|오른팔|왼다리|오른다리|팔꿈치|골반|어깨|무릎|발목|손목|고개|허리|엉덩이|다리|머리|팔|발|손|가슴|턱";
+  "발끝|앞꿈치|뒤꿈치|발가락|왼팔|오른팔|왼다리|오른다리|팔꿈치|골반|어깨|무릎|발목|손목|고개|허리|엉덩이|다리|머리|팔|발|손|가슴|턱";
 
 export type Prepared = {
   original: string;
@@ -152,7 +204,7 @@ function eulReul(noun: string): "을" | "를" {
 /** Korean sent to the translator, with homonyms nudged toward the rehab sense. */
 export function rewriteQuery(korean: string): string {
   const spelled = clarify(normalize(korean));
-  const text = asksCondition(spelled) ? `${spelled.replace(/[\s.!?~]+$/, "")}?` : spelled;
+  const text = asksCondition(spelled) || isQuestion(spelled) ? `${spelled.replace(/[\s.!?~]+$/, "")}?` : spelled;
   const lift = new RegExp(`(${BODY})(을|를)?\\s*((?:(?:살짝|조금|천천히|높이|더|좀|최대한|같이|번갈아)\\s*)*)들어\\s*(?:보세요|주세요|주십시오|보시오)`);
   const found = text.match(lift);
   if (found && !/들어\s*올리/.test(text)) {
@@ -177,7 +229,13 @@ function dont(body: string): RegExp {
 }
 
 /** Fixed "don't" lines: the keyless translator turns 숨 참지 마세요 into "don't breathe" and 배 into a boat. */
-export const NEGATIVE_PATTERNS: { re: RegExp; ja: string; key: string }[] = [
+export const NEGATIVE_PATTERNS: Pattern[] = [
+  // "아프지 않은 다리부터" counts as negated.
+  STAIRS[0],
+  { re: dont("(?:배|복부)(?:를|는)?\\s*(?:앞으로\\s*)?내밀"), ja: "お腹を突き出さないでください", key: "배를 내밀지 마세요" },
+  { re: dont("다리(?:를|는)?\\s*꼬"), ja: "足を組まないでください", key: "다리를 꼬지 마세요" },
+  { re: dont("(?:너무\\s*)?서두르"), ja: "急がないでください", key: "서두르지 마세요" },
+  { re: dont("(?:절대로?\\s*)?혼자(?:서)?\\s*일어나(?:시)?"), ja: "一人で立ち上がらないでください", key: "혼자 일어나지 마세요" },
   { re: dont("(?:숨|호흡)(?:을|은)?\\s*(?:참|멈추)"), ja: "息を止めないでください", key: "숨을 참지 마세요" },
   {
     re: /^(?:숨|호흡)(?:을|은)?\s*(?:참|멈추)지\s*말고\s*(?:편하게|편안하게|천천히|계속)?\s*(?:숨(?:을)?\s*)?(?:쉬세요|쉬어\s*보세요|쉬어\s*주세요|호흡하세요)[\s.!]*$/,
@@ -191,9 +249,33 @@ export const NEGATIVE_PATTERNS: { re: RegExp; ja: string; key: string }[] = [
   { re: dont("(?:옆으로\\s*)?돌아\\s*눕"), ja: "横向きにならないでください", key: "돌아눕지 마세요" },
 ];
 
+const COUNT: Record<string, number> = { 하나: 1, 둘: 2, 두: 2, 셋: 3, 세: 3, 넷: 4, 네: 4, 다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9 };
+
+/** 열까지 → 10까지: Google reads 열 as fever. */
+function digits(korean: string): string {
+  return korean.replace(
+    /(^|\s)(?:(스물|열)\s?(다섯|여섯|일곱|여덟|아홉|하나|둘|두|셋|세|넷|네)?|(다섯|여섯|일곱|여덟|아홉|두|세|네|둘|셋|넷))\s?(번|회|초|걸음|시간|까지|세트)/g,
+    (_all, space: string, ten: string | undefined, unit: string | undefined, alone: string | undefined, counter: string) =>
+      `${space}${alone ? COUNT[alone] : (ten === "스물" ? 20 : 10) + (unit ? COUNT[unit] : 0)}${counter}`,
+  );
+}
+
 /** Spell out words the keyless translator misreads: 숨 참다 becomes "breathe", 배 a boat, 들 때 "when listening". */
 function clarify(korean: string): string {
-  return korean
+  return digits(korean)
+    .replace(/(\d+)번만\s*더/g, "$1번 더")
+    .replace(/(^|\s)안\s*아픈/g, "$1통증이 없는")
+    .replace(/(^|\s)아픈\s*(?=쪽|다리|팔|발|손|무릎|어깨)/g, "$1통증이 있는 ")
+    .replace(/(^|\s)배(를|는|을)?\s*(?=내밀|집어넣|누르|눌러|만지|만져|당기|당겨)/g, "$1복부$2 ")
+    .replace(/(다리|팔|발|손|무릎|어깨|목|허리|엉덩이)(에|의|는|은)?\s*힘(을)?\s*빼(?=세요|고|면|주세요|\s*보세요|\s*주세요)/g, (_all, part: string, _josa: string | undefined) => `${part}의 긴장을 풀어`)
+    .replace(/긴장을 풀어고/g, "긴장을 풀고")
+    .replace(/긴장을 풀어면/g, "긴장을 풀면")
+    .replace(/긴장을 풀어세요/g, "긴장을 풀어 주세요")
+    .replace(/긴장을 풀어주세요/g, "긴장을 풀어 주세요")
+    .replace(/보조기/g, "보조 장구")
+    .replace(/디디세요/g, "바닥에 대세요")
+    .replace(/디디고/g, "바닥에 대고")
+    .replace(/어느\s*쪽이\s*더\s*아프(?=세요|셔요)/g, "어느 쪽이 통증이 더 심하")
     .replace(/숨(?:을)?\s*(크게|깊게|깊이)\s*쉬었/g, "숨을 $1 들이마셨")
     .replace(/숨(?:을)?\s*(크게|깊게|깊이)\s*쉴/g, "숨을 $1 들이마실")
     .replace(/숨(?:을)?\s*(크게|깊게|깊이)\s*쉬(면|고|니까)/g, "숨을 $1 들이마시$2")

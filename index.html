@@ -32,7 +32,7 @@
     <div id="app" class="app">
       <header class="top">
         <div class="titles">
-          <h1>치료 통역 <span class="app-version">v3.1</span></h1>
+          <h1>치료 통역 <span class="app-version">v3.2</span></h1>
           <p id="status" class="status">준비 중</p>
         </div>
         <div class="top-actions">
@@ -56,6 +56,9 @@
         </label>
         <button id="test-voice" type="button" class="voice-test">🔊 들어보기</button>
         <p id="voice-note" class="engine-state"></p>
+        <h2>기록</h2>
+        <label class="keep-row"><input id="keep-cards" type="checkbox" /> 오늘 카드 남기기</label>
+        <p class="engine-state">새로고침해도 오늘 카드가 남습니다. 환자와 나눈 말이 이 폰에 저장되고, 다음 날 앱을 열 때 지워집니다. 끄거나 ‘기록 지우기’를 누르면 바로 지워집니다.</p>
         <h2>번역 설정</h2>
         <p>Gemini 키를 넣으면 치료 상황에 맞춘 더 자연스러운 번역을 씁니다. 키는 이 폰에만 저장돼요.</p>
         <p><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Gemini 키 무료로 받기</a></p>
@@ -93,10 +96,11 @@
       <div class="dock">
         <section class="phrases-panel" aria-labelledby="phrases-title">
           <div class="panel-head">
-            <h2 id="phrases-title" class="panel-title">자주 쓰는 말</h2>
+            <h2 id="phrases-title" class="panel-title"><button id="toggle-phrases" type="button" aria-expanded="false" aria-controls="presets">자주 쓰는 말 <small>펼치기 ▲</small></button></h2>
             <button id="edit-phrases" type="button" class="panel-btn" aria-label="자주 쓰는 말 편집">편집</button>
             <button id="open-answers" type="button" class="panel-btn is-answer">환자 대답</button>
           </div>
+          <div id="phrase-nav" class="phrase-nav" aria-label="묶음으로 가기"></div>
           <div id="presets" class="presets" aria-label="자주 쓰는 말"></div>
         </section>
         <div class="controls">

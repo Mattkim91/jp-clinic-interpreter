@@ -14,6 +14,18 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+/** Drop the scripts and styles of earlier versions: keep only what this page names. */
+async function tidy(page) {
+  const html = await page.text();
+  const named = new Set([...html.matchAll(/assets\/[^"'\s)]+/g)].map((match) => match[0].split("/").pop()));
+  if (!named.size) return;
+  const cache = await caches.open(CACHE);
+  for (const request of await cache.keys()) {
+    const parts = new URL(request.url).pathname.split("/");
+    if (parts[parts.length - 2] === "assets" && !named.has(parts[parts.length - 1])) await cache.delete(request);
+  }
+}
+
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
@@ -26,6 +38,7 @@ self.addEventListener("fetch", (event) => {
           if (response.ok) {
             const copy = response.clone();
             caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+            if (event.request.mode === "navigate") event.waitUntil(tidy(response.clone()).catch(() => {}));
           }
           return response;
         })
