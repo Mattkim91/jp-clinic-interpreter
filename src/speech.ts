@@ -23,20 +23,52 @@ export function endsSentence(text: string): boolean {
 }
 
 /** Silence (ms) to wait before translating: short once a sentence ending is heard, long otherwise. */
-export const PAUSE_AFTER_ENDING = 1300;
+export const PAUSE_AFTER_ENDING = 1000;
 export const PAUSE_WITHOUT_ENDING = 3000;
 
 export function flushDelay(text: string): number {
   return endsSentence(text) ? PAUSE_AFTER_ENDING : PAUSE_WITHOUT_ENDING;
 }
 
-/** Append a recognized chunk to the pending sentence, skipping exact repeats. */
+/**
+ * Remove phrases the recognizer restarted: "여기 여기 매트에 여기 매트에 누워 보세요" -> "여기 매트에 누워 보세요".
+ * A run of words immediately followed by the same run is kept once.
+ */
+export function collapseRepeats(text: string): string {
+  let words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 1; i < words.length && !changed; i++) {
+      for (let j = 0; j < i; j++) {
+        const len = i - j;
+        if (i + len > words.length) continue;
+        if (words.slice(j, i).join(" ") === words.slice(i, i + len).join(" ")) {
+          words = [...words.slice(0, j), ...words.slice(i)];
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  return words.join(" ");
+}
+
+/** Append a recognized chunk to the pending sentence, merging overlaps that Android re-sends. */
 export function appendChunk(pending: string, chunk: string): string {
-  const c = chunk.replace(/\s+/g, " ").trim();
+  const c = collapseRepeats(chunk);
   if (!c) return pending;
   if (!pending) return c;
-  if (pending === c || pending.endsWith(" " + c)) return pending;
-  return `${pending} ${c}`;
+  if (c.startsWith(pending)) return c;
+  if (pending.endsWith(c) || pending.includes(c)) return pending;
+  const pw = pending.split(" ");
+  const cw = c.split(" ");
+  for (let k = Math.min(pw.length, cw.length); k >= 1; k--) {
+    if (pw.slice(-k).join(" ") === cw.slice(0, k).join(" ")) {
+      return collapseRepeats([...pw, ...cw.slice(k)].join(" "));
+    }
+  }
+  return collapseRepeats(`${pending} ${c}`);
 }
 
 type RecHandle = {
@@ -124,7 +156,7 @@ export function createListener(options: {
 
   const flush = () => {
     clearFlush();
-    const text = pending.trim();
+    const text = collapseRepeats(pending);
     pending = "";
     options.onInterim("");
     if (text) options.onFinal(text);
@@ -164,7 +196,7 @@ export function createListener(options: {
       quietRestarts = 0;
       const { finals, interim } = collectUtterance(slicesOf(event), event.resultIndex);
       for (const text of finals) pending = appendChunk(pending, text);
-      options.onInterim([pending, interim].filter(Boolean).join(" "));
+      options.onInterim(interim ? appendChunk(pending, interim) : pending);
       if (interim) {
         // Still talking: wait until the sentence is actually finished.
         clearFlush();

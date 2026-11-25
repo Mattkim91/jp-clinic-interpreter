@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appendChunk, endsSentence, flushDelay, PAUSE_AFTER_ENDING, PAUSE_WITHOUT_ENDING } from "../src/speech.ts";
+import { appendChunk, collapseRepeats, endsSentence, flushDelay, PAUSE_AFTER_ENDING, PAUSE_WITHOUT_ENDING } from "../src/speech.ts";
 
 describe("sentence end detection", () => {
   it("recognizes finished Korean sentences", () => {
@@ -22,5 +22,20 @@ describe("sentence end detection", () => {
     p = appendChunk(p, "천천히 내쉬세요");
     p = appendChunk(p, "천천히 내쉬세요");
     assert.equal(p, "숨을 크게 들이쉬고 천천히 내쉬세요");
+  });
+});
+
+describe("android repeated chunks", () => {
+  it("collapses restarted phrases", () => {
+    assert.equal(collapseRepeats("여기 여기 매트에 여기 매트에 누워 여기 매트에 누워 보세요"), "여기 매트에 누워 보세요");
+    assert.equal(collapseRepeats("별일 별일 없으셨나요"), "별일 없으셨나요");
+    assert.equal(collapseRepeats("천천히 일어나세요"), "천천히 일어나세요");
+  });
+  it("merges cumulative and overlapping chunks", () => {
+    let p = appendChunk("", "여기");
+    p = appendChunk(p, "여기 매트에");
+    p = appendChunk(p, "여기 매트에 누워");
+    p = appendChunk(p, "누워 보세요");
+    assert.equal(p, "여기 매트에 누워 보세요");
   });
 });
