@@ -690,11 +690,13 @@ h1 { font-size: 1.2rem; color: var(--green); }
 .panel-title small { margin-left: 2px; color: #5c544b; font-size: 0.74rem; font-weight: 600; }
 .presets .chip { min-height: 40px; }
 .phrase-nav { display: none; }
-.phrases-open .log, .phrases-open .hint { display: none; }
-.phrases-open .dock { flex: 1; min-height: 0; display: flex; flex-direction: column; padding-top: 10px; }
+/* Lower half: phrases and the mic. Upper half: the card. */
+.phrases-open .hint, .phrases-open .manual, .phrases-open .dock-row { display: none; }
+.phrases-open #phrase-editor .manual { display: flex; }
+.phrases-open .dock { flex: 0 0 50%; min-height: 0; display: flex; flex-direction: column; }
 .phrases-open .phrases-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .phrases-open .presets { flex: 1; min-height: 0; max-height: none; }
-.phrases-open .phrase-nav { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; padding: 8px 10px; border-bottom: 1px solid #e6ddce; }
+.phrases-open .phrase-nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; padding: 6px 8px; border-bottom: 1px solid #e6ddce; }
 .phrase-nav button { min-height: 40px; padding: 0 4px; border: 1.5px solid var(--green); border-radius: 10px; background: #fff; color: var(--green); font-size: 0.86rem; font-weight: 700; white-space: nowrap; }
 
 /* Patient answers: full screen, big targets */
@@ -746,6 +748,9 @@ h1 { font-size: 1.2rem; color: var(--green); }
 .an-tabs button > span { font-size: 1.2rem; }
 .an-tabs button.is-on { background: #fff; box-shadow: 0 1px 5px rgba(62, 44, 22, 0.2); }
 
+.update { flex: none; min-height: 40px; margin: 6px 10px 0; padding: 4px 12px; border: 1.5px solid var(--green); border-radius: 11px; background: #e7f4f1; color: var(--green); font-size: 0.88rem; font-weight: 700; }
+.update[hidden] { display: none; }
+
 /* ===== v3.3: lower bars, more room for the card ===== */
 /* Header */
 .top, .phrases-open .top { padding: 4px 12px; }
@@ -781,9 +786,7 @@ h1 { font-size: 1.02rem; line-height: 1.2; }
 .preset-group + .preset-group { margin-top: 6px; padding-top: 5px; }
 .preset-chips { gap: 5px; }
 .presets .chip { min-height: 36px; padding: 0 10px; font-size: 0.84rem; }
-.phrases-open .dock { padding-top: 6px; }
-.phrases-open .phrase-nav { gap: 5px; padding: 6px 8px; }
-.phrase-nav button { min-height: 38px; font-size: 0.82rem; }
+.phrase-nav button { min-height: 36px; padding: 0 1px; font-size: clamp(0.7rem, 3.2vw, 0.82rem); letter-spacing: -0.03em; }
 /* Control bar */
 .controls { padding: 6px 10px calc(6px + env(safe-area-inset-bottom)); gap: 5px; border-radius: 16px 16px 0 0; }
 /* 16px text: anything smaller makes iPhones zoom in. */

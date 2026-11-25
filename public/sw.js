@@ -33,7 +33,8 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     (dict ? caches.match(event.request) : Promise.resolve(undefined)).then((cached) => {
       if (cached) return cached;
-      return fetch(event.request)
+      // GitHub Pages lets the page be reused for 10 minutes: ask the server each time instead.
+      return (event.request.mode === "navigate" ? fetch(event.request, { cache: "no-cache" }) : fetch(event.request))
         .then((response) => {
           if (response.ok) {
             const copy = response.clone();

@@ -17,6 +17,7 @@ import { fetchArabicLatin, fetchJaRomaji, translateFromKo, translateToKo } from 
 import { getGeminiKey, interpretAudio, setGeminiKey, translateToKoWithGemini, translateToWithGemini, translateWithGemini, warmGemini } from "./gemini";
 import { loadTokenizer, type Tokenizer } from "./tokenizer";
 import { isEcho, type Turn } from "./turns";
+import { watchForUpdates } from "./update";
 import { createWake, type WakeMode } from "./wake";
 
 type Card = {
@@ -762,7 +763,6 @@ export function startApp(): void {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-preset]");
       if (!button) return;
       unlockSpeech();
-      openPhrases(false);
       submit(button.dataset.preset ?? "");
     });
   }
@@ -990,6 +990,25 @@ export function startApp(): void {
     render();
   });
 
+  const update = document.querySelector<HTMLButtonElement>("#update");
+  update?.addEventListener("click", () => {
+    storeCards(cards);
+    window.location.reload();
+  });
+  watchForUpdates({
+    idle: () =>
+      !cards.length &&
+      listening !== "listening" &&
+      !aloud.length &&
+      !document.querySelector("dialog[open]") &&
+      !document.querySelector<HTMLInputElement>("#manual-input")?.value,
+    onFound: (version) => {
+      if (!update) return;
+      update.hidden = false;
+      update.textContent = `새 버전 ${version} · 누르면 새로고침${keepsCards() ? "" : " (카드는 지워져요)"}`;
+    },
+  });
+
   const syncViewport = () => {
     const height = window.visualViewport?.height ?? window.innerHeight;
     document.documentElement.style.setProperty("--app-h", `${Math.round(height)}px`);
@@ -1018,7 +1037,7 @@ export function startApp(): void {
 }
 
 let phrasesOpen = false;
-/** Give the phrase list the room of the cards until a phrase is chosen. */
+/** Open the phrase list up to the middle of the screen; it stays open so several can be used in a row. */
 function openPhrases(open: boolean): void {
   if (open === phrasesOpen) return;
   phrasesOpen = open;
@@ -1028,7 +1047,7 @@ function openPhrases(open: boolean): void {
     button.setAttribute("aria-expanded", String(open));
     button.querySelector("small")!.textContent = open ? "접기 ▼" : "펼치기 ▲";
   }
-  if (!open) scrollLog();
+  scrollLog();
 }
 
 /** The "자주 쓰는 말" panel: favourites first, then the groups. */
