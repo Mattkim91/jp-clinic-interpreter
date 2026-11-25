@@ -169,7 +169,7 @@ function paintSpeak(): void {
   }
 }
 
-/** "끝나면 읽어 주기": always on in auto mode. */
+/** "자동 읽어주기": always on in auto mode. */
 function autoRead(text: string, lang: SpeechLang, id: number): void {
   if (!autoSpeak && mode !== "auto") return;
   if (mode !== "auto" && lang !== "ko") {
