@@ -1,4 +1,4 @@
-# 진료 통역
+# 치료 통역
 
 A phone web app for a Korean physical therapist treating Japanese patients. Speak or type a Korean sentence and it becomes a large Japanese cue card, with hangul showing how to read the Japanese aloud. Tap a card to hear it in Japanese.
 

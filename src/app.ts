@@ -153,7 +153,7 @@ function installLine(): string {
     (navigator as Navigator & { standalone?: boolean }).standalone === true;
   if (standalone || cards.length > 0) return "";
   if (platform.kind === "ios") return "Safari의 공유 버튼에서 ‘홈 화면에 추가’하면 전체 화면으로 열립니다.";
-  return "브라우저 메뉴에서 홈 화면에 추가하면 진료 중에 전체 화면으로 쓸 수 있습니다.";
+  return "브라우저 메뉴에서 홈 화면에 추가하면 치료 중에 전체 화면으로 쓸 수 있습니다.";
 }
 
 function renderChrome(): void {

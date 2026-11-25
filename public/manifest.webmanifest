@@ -1,6 +1,6 @@
 {
-  "name": "진료 통역",
-  "short_name": "진료통역",
+  "name": "치료 통역",
+  "short_name": "치료통역",
   "description": "한국어로 말하면 환자에게 일본어로 보여 주는 물리치료 통역",
   "start_url": "./",
   "scope": "./",
