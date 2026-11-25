@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#f4f0e8" />
+    <meta name="color-scheme" content="light" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="진료 통역" />
+    <title>진료 통역</title>
+    <meta
+      name="description"
+      content="한국어로 말하면 일본어 환자와 바로 소통하는 물리치료 통역. 큰 글씨와 한글 발음."
+    />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app" class="app">
+      <header class="top">
+        <div class="titles">
+          <h1>진료 통역</h1>
+          <p id="status" class="status">준비 중</p>
+        </div>
+        <button id="clear" type="button" class="text-btn">기록 지우기</button>
+      </header>
+      <p id="banner" class="banner" hidden></p>
+      <div id="log" class="log" role="log" aria-relevant="additions"></div>
+      <p id="interim" class="interim" hidden>
+        <span class="dot" aria-hidden="true"></span>
+        <span id="interim-text"></span>
+      </p>
+      <div class="dock">
+        <div id="presets" class="presets" aria-label="자주 쓰는 말"></div>
+        <form id="manual" class="manual">
+          <label class="sr" for="manual-input">한국어 문장</label>
+          <input
+            id="manual-input"
+            enterkeyhint="send"
+            autocomplete="off"
+            autocapitalize="off"
+            placeholder="한국어로 입력"
+          />
+          <button type="submit">번역</button>
+        </form>
+        <label class="auto">
+          <input id="auto-speak" type="checkbox" />
+          <span>끝나면 읽어 주기</span>
+        </label>
+        <p id="hint" class="hint"></p>
+        <button id="mic" type="button" class="mic" aria-pressed="false">
+          <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M12 3.2a3.2 3.2 0 0 1 3.2 3.2v5.2a3.2 3.2 0 1 1-6.4 0V6.4A3.2 3.2 0 0 1 12 3.2z"
+              fill="currentColor"
+            />
+            <path
+              d="M6.2 11.2a5.8 5.8 0 0 0 11.6 0"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+            <path d="M12 17v3.2M9.2 20.2h5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          </svg>
+          <span id="mic-label">듣기 시작</span>
+        </button>
+      </div>
+    </div>
+    <video id="nosleep" playsinline muted loop preload="auto" src="./silence.mp4" aria-hidden="true"></video>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

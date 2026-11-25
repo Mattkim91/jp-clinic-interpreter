@@ -1,0 +1,5 @@
+node_modules
+dist
+public/kuromoji-dict
+.DS_Store
+*.log
