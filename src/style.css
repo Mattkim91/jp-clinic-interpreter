@@ -366,3 +366,6 @@ h1 {
 .engine-state { color: #555; font-size: 0.92rem; min-height: 1.4em; }
 .settings-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
 .settings-actions #save-key { background: var(--green); color: #fff; border: 0; border-radius: 12px; padding: 12px 16px; font-weight: 700; font-size: 1rem; }
+.voice-choice { display: flex; gap: 20px; font-size: 1.1rem; margin: 4px 0; }
+.voice-choice input { width: 22px; height: 22px; vertical-align: middle; accent-color: var(--green); }
+.settings h2 + .voice-choice { margin-bottom: 2px; }

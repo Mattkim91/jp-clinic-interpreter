@@ -3,7 +3,7 @@ import { detectPlatform, type PlatformInfo } from "./platform";
 import { politify } from "./polite";
 import { PRESETS, prepare } from "./prepare";
 import { hangulFromTokens } from "./reading";
-import { canSpeak, primeVoices, speakJapanese, unlockSpeech } from "./speak";
+import { canSpeak, getVoiceGender, pickJapaneseVoice, primeVoices, setVoiceGender, speakJapanese, unlockSpeech, type VoiceGender } from "./speak";
 import { createListener, type ListenState } from "./speech";
 import { fetchJaRomaji, translateKoToJa } from "./translate";
 import { getGeminiKey, setGeminiKey, translateWithGemini } from "./gemini";
@@ -398,9 +398,31 @@ function setupSettings(): void {
     open.textContent = getGeminiKey() ? "설정 · Gemini" : "설정";
   };
   showState();
+  const voiceNote = document.querySelector<HTMLParagraphElement>("#voice-note");
+  const radios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="voice-gender"]'));
+  const showVoice = () => {
+    const gender = getVoiceGender();
+    for (const radio of radios) radio.checked = radio.value === gender;
+    if (!voiceNote) return;
+    const { voice, exact } = pickJapaneseVoice(gender);
+    voiceNote.textContent = voice
+      ? exact
+        ? `사용 중: ${voice.name}`
+        : `이 폰에 ${gender === "male" ? "남자" : "여자"} 일본어 음성이 없어 음높이를 바꿔 읽어요 (${voice.name})`
+      : "이 폰에서 일본어 음성을 찾지 못했어요";
+  };
+  for (const radio of radios) {
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      setVoiceGender(radio.value as VoiceGender);
+      showVoice();
+      speakJapanese("こんにちは。よろしくお願いします。");
+    });
+  }
   open.addEventListener("click", () => {
     input.value = getGeminiKey();
     showState();
+    showVoice();
     dialog.showModal();
   });
   close.addEventListener("click", () => dialog.close());
