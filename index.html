@@ -32,7 +32,7 @@
     <div id="app" class="app">
       <header class="top">
         <div class="titles">
-          <h1>치료 통역 <span class="app-version">v2.3</span></h1>
+          <h1>치료 통역 <span class="app-version">v2.4</span></h1>
           <p id="status" class="status">준비 중</p>
         </div>
         <div class="top-actions">
@@ -73,7 +73,11 @@
         <span id="interim-text"></span>
       </p>
       <div class="dock">
-        <div id="presets" class="presets" aria-label="자주 쓰는 말"></div>
+        <section class="phrases-panel" aria-labelledby="phrases-title">
+          <h2 id="phrases-title" class="panel-title">자주 쓰는 말</h2>
+          <div id="presets" class="presets" aria-label="자주 쓰는 말"></div>
+        </section>
+        <div class="controls">
         <form id="manual" class="manual">
           <label class="sr" for="manual-input">한국어 문장</label>
           <input
@@ -122,6 +126,7 @@
             <span class="mic-flag" aria-hidden="true">🇯🇵</span>
             <span class="mic-side-label" id="mic-ja-label">患者さん 話す<small>(환자)</small></span>
           </button>
+        </div>
         </div>
       </div>
     </div>

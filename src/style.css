@@ -465,3 +465,131 @@ h1 {
 @media (max-height: 700px) {
   .mic-pair .mic-side { min-height: 64px; }
 }
+
+/* ===== v2.4: clearly separated zones ===== */
+:root {
+  --zone-log: #ebe4d6;
+  --surface: #fffdf8;
+  --panel-line: #ddd3c2;
+}
+.app { background: var(--zone-log); }
+
+/* (1) Header */
+.top {
+  background: var(--surface);
+  border-bottom: 1px solid var(--panel-line);
+  box-shadow: 0 2px 10px rgba(62, 44, 22, 0.06);
+  padding: 8px 14px 8px;
+  position: relative;
+  z-index: 2;
+}
+h1 { font-size: 1.2rem; color: var(--green); }
+.status { font-size: 0.78rem; }
+.top-actions .text-btn { min-height: 40px; padding: 6px 12px; font-size: 0.9rem; }
+
+/* (2) Translation card area */
+.log { padding: 10px 12px 10px; gap: 12px; }
+.card {
+  background: #fff;
+  border: 1.5px solid #d9cfbe;
+  box-shadow: 0 6px 18px rgba(62, 44, 22, 0.10);
+}
+.card.is-newest { border-color: #9cc7bf; }
+.ja { color: #14110e; }
+.card .ko { font-size: 0.95rem; }
+.card.is-patient { background: #fff3e4; border-color: #e9c49f; border-left: 6px solid #c26a1e; }
+.card.is-patient.is-newest { border-color: #e1ad7a; border-left-color: #c26a1e; }
+.empty { background: rgba(255, 253, 248, 0.7); border: 1.5px dashed #cdbfa8; border-radius: 18px; padding: 18px 16px; margin: auto 0; }
+.interim { margin: 0 12px 8px; border: 1px solid #ecd9b4; }
+
+/* Dock holds zones 3 + 4 */
+.dock {
+  background: transparent;
+  border-top: 0;
+  padding: 0;
+  gap: 0;
+}
+
+/* (3) Frequent phrases panel */
+.phrases-panel {
+  margin: 0 12px 10px;
+  background: var(--surface);
+  border: 1px solid var(--panel-line);
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(62, 44, 22, 0.05);
+  overflow: hidden;
+}
+.panel-title {
+  margin: 0;
+  padding: 7px 12px 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--green);
+  background: #f1ece2;
+  border-bottom: 1px solid #e6ddce;
+  letter-spacing: -0.01em;
+}
+.presets {
+  max-height: 24vh;
+  max-height: 24dvh;
+  padding: 8px 10px 10px;
+  scrollbar-width: thin;
+}
+.preset-group + .preset-group { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #e6ddce; }
+.preset-title { margin: 0 0 6px; font-size: 0.82rem; font-weight: 700; color: #4a4239; }
+.preset-chips { gap: 6px; }
+.presets .chip {
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 10px;
+  border: 1px solid #e3dacb;
+  background: #f8f4ec;
+  color: var(--ink);
+  font-weight: 500;
+  font-size: 0.88rem;
+}
+.presets .chip:active { background: var(--green); color: var(--green-ink); border-color: var(--green); }
+
+/* (4) Control bar */
+.controls {
+  background: var(--surface);
+  border-top: 1px solid var(--panel-line);
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -4px 16px rgba(62, 44, 22, 0.08);
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.manual input { height: 46px; background: #f8f4ec; border-color: #ddd3c2; }
+.manual button { height: 46px; }
+.dock-row { min-height: 40px; }
+.auto { font-size: 0.92rem; color: #3b352f; }
+.mode-toggle { background: #ece5d8; border: 1px solid #ddd3c2; }
+.mode-toggle button { min-height: 34px; font-size: 0.9rem; }
+.hint { font-size: 0.74rem; color: #8a8177; min-height: 0; margin: -2px 2px 0; }
+.hint:empty { display: none; }
+.mic { min-height: 68px; border-radius: 18px; }
+.mic-pair .mic-side { min-height: 68px; border-radius: 18px; }
+
+@media (max-height: 740px) {
+  .presets { max-height: 20vh; max-height: 20dvh; }
+  .hint { display: none; }
+  .mic, .mic-pair .mic-side { min-height: 58px; }
+  .controls { gap: 6px; padding-top: 8px; }
+}
+/* v2.4 readability: no mid-word Korean breaks, balanced big lines */
+.app { word-break: keep-all; overflow-wrap: break-word; }
+.ja, .ja-src, .reading, .empty-ja, .mic-ja { word-break: normal; overflow-wrap: anywhere; }
+.ja, .ko-big { text-wrap: balance; }
+.phrases-panel { margin-bottom: 8px; }
+.presets { max-height: 21vh; max-height: 21dvh; }
+.controls { padding-top: 8px; gap: 7px; }
+.mic, .mic-pair .mic-side { min-height: 64px; }
+@media (max-height: 700px) {
+  .presets { max-height: 16vh; max-height: 16dvh; padding-top: 6px; }
+  .panel-title { padding: 5px 12px 4px; }
+  .top { padding-top: 6px; padding-bottom: 6px; }
+}
+.log { scroll-padding: 10px 0; }
+.log .card { min-height: calc(100% - 20px); }
