@@ -6,6 +6,7 @@ import { hangulFromTokens } from "./reading";
 import { canSpeak, primeVoices, speakJapanese, unlockSpeech } from "./speak";
 import { createListener, type ListenState } from "./speech";
 import { fetchJaRomaji, translateKoToJa } from "./translate";
+import { getGeminiKey, setGeminiKey, translateWithGemini } from "./gemini";
 import { loadTokenizer, type Tokenizer } from "./tokenizer";
 import { createWake, type WakeMode } from "./wake";
 
@@ -73,7 +74,15 @@ async function readingFor(ja: string): Promise<string> {
 async function fill(card: Card): Promise<void> {
   try {
     const prepared = prepare(card.ko);
-    const translated = prepared.overrideJa ?? (await translateKoToJa(prepared.query));
+    let translated = prepared.overrideJa ?? "";
+    if (!translated && getGeminiKey()) {
+      try {
+        translated = await translateWithGemini(card.ko);
+      } catch {
+        translated = "";
+      }
+    }
+    if (!translated) translated = await translateKoToJa(prepared.query);
     const ja = prepared.overrideJa ? translated : politify(translated, card.ko);
     const reading = await readingFor(ja);
     card.ja = ja;
@@ -323,6 +332,7 @@ export function startApp(): void {
     });
   });
 
+  setupSettings();
   const clear = document.querySelector<HTMLButtonElement>("#clear");
   clear?.addEventListener("click", () => {
     if (!cards.length) return;
@@ -370,4 +380,48 @@ declare global {
       dictReady: () => Promise<boolean>;
     };
   }
+}
+
+
+function setupSettings(): void {
+  const dialog = document.querySelector<HTMLDialogElement>("#settings");
+  const open = document.querySelector<HTMLButtonElement>("#open-settings");
+  const input = document.querySelector<HTMLInputElement>("#gemini-key");
+  const save = document.querySelector<HTMLButtonElement>("#save-key");
+  const remove = document.querySelector<HTMLButtonElement>("#remove-key");
+  const close = document.querySelector<HTMLButtonElement>("#close-settings");
+  const state = document.querySelector<HTMLParagraphElement>("#engine-state");
+  if (!dialog || !open || !input || !save || !remove || !close || !state) return;
+  const showState = (message?: string) => {
+    state.textContent =
+      message ?? (getGeminiKey() ? "현재 번역: Gemini (실패하면 구글 번역)" : "현재 번역: 구글 번역 (Gemini 키 없음)");
+    open.textContent = getGeminiKey() ? "설정 · Gemini" : "설정";
+  };
+  showState();
+  open.addEventListener("click", () => {
+    input.value = getGeminiKey();
+    showState();
+    dialog.showModal();
+  });
+  close.addEventListener("click", () => dialog.close());
+  remove.addEventListener("click", () => {
+    setGeminiKey("");
+    input.value = "";
+    showState("키를 지웠어요. 구글 번역을 씁니다.");
+  });
+  save.addEventListener("click", async () => {
+    const key = input.value.trim();
+    if (!key) return;
+    save.disabled = true;
+    showState("키 확인 중…");
+    try {
+      const ja = await translateWithGemini("엉덩이 들어보세요", key);
+      setGeminiKey(key);
+      showState(`저장 완료. 테스트: ${ja}`);
+    } catch (error) {
+      showState(`키 확인 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
+    } finally {
+      save.disabled = false;
+    }
+  });
 }

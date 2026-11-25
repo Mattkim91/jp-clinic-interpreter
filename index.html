@@ -32,11 +32,26 @@
     <div id="app" class="app">
       <header class="top">
         <div class="titles">
-          <h1>치료 통역 <span class="app-version">v1.3</span></h1>
+          <h1>치료 통역 <span class="app-version">v1.4</span></h1>
           <p id="status" class="status">준비 중</p>
         </div>
-        <button id="clear" type="button" class="text-btn">기록 지우기</button>
+        <div class="top-actions">
+          <button id="open-settings" type="button" class="text-btn">설정</button>
+          <button id="clear" type="button" class="text-btn">기록 지우기</button>
+        </div>
       </header>
+      <dialog id="settings" class="settings">
+        <h2>번역 설정</h2>
+        <p>Gemini 키를 넣으면 치료 상황에 맞춘 더 자연스러운 번역을 씁니다. 키는 이 폰에만 저장돼요.</p>
+        <p><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Gemini 키 무료로 받기</a></p>
+        <input id="gemini-key" type="password" autocomplete="off" placeholder="Gemini API 키 붙여넣기" />
+        <p id="engine-state" class="engine-state"></p>
+        <div class="settings-actions">
+          <button id="save-key" type="button">저장하고 확인</button>
+          <button id="remove-key" type="button" class="text-btn">키 지우기</button>
+          <button id="close-settings" type="button" class="text-btn">닫기</button>
+        </div>
+      </dialog>
       <p id="banner" class="banner" hidden></p>
       <div id="log" class="log" role="log" aria-relevant="additions"></div>
       <p id="interim" class="interim" hidden>
