@@ -14,6 +14,31 @@ export function collectUtterance(results: RecSlice[], fromIndex: number): { fina
   return { finals, interim: interim.join(" ") };
 }
 
+/** Korean sentence-final endings (polite/plain requests, statements, questions). */
+const SENTENCE_END = /(요|다|까|죠|니다|세요|래|자|네|군|지)[\s.?!~。…]*$|[.?!。？！]\s*$/;
+
+/** True when the buffered Korean looks like a complete sentence. */
+export function endsSentence(text: string): boolean {
+  return SENTENCE_END.test(text.trim());
+}
+
+/** Silence (ms) to wait before translating: short once a sentence ending is heard, long otherwise. */
+export const PAUSE_AFTER_ENDING = 1300;
+export const PAUSE_WITHOUT_ENDING = 3000;
+
+export function flushDelay(text: string): number {
+  return endsSentence(text) ? PAUSE_AFTER_ENDING : PAUSE_WITHOUT_ENDING;
+}
+
+/** Append a recognized chunk to the pending sentence, skipping exact repeats. */
+export function appendChunk(pending: string, chunk: string): string {
+  const c = chunk.replace(/\s+/g, " ").trim();
+  if (!c) return pending;
+  if (!pending) return c;
+  if (pending === c || pending.endsWith(" " + c)) return pending;
+  return `${pending} ${c}`;
+}
+
 type RecHandle = {
   lang: string;
   continuous: boolean;
@@ -89,8 +114,27 @@ export function createListener(options: {
   let listening = false;
   let timer = 0;
   let quietRestarts = 0;
-  let lastFinal = "";
-  let lastFinalAt = 0;
+  let pending = "";
+  let flushTimer = 0;
+
+  const clearFlush = () => {
+    if (flushTimer) window.clearTimeout(flushTimer);
+    flushTimer = 0;
+  };
+
+  const flush = () => {
+    clearFlush();
+    const text = pending.trim();
+    pending = "";
+    options.onInterim("");
+    if (text) options.onFinal(text);
+  };
+
+  const scheduleFlush = () => {
+    clearFlush();
+    if (!pending) return;
+    flushTimer = window.setTimeout(flush, flushDelay(pending));
+  };
 
   const clearTimer = () => {
     if (timer) window.clearTimeout(timer);
@@ -119,15 +163,14 @@ export function createListener(options: {
     rec.onresult = (event) => {
       quietRestarts = 0;
       const { finals, interim } = collectUtterance(slicesOf(event), event.resultIndex);
-      options.onInterim(interim);
-      for (const text of finals) {
-        const now = Date.now();
-        if (text === lastFinal && now - lastFinalAt < 1600) continue;
-        lastFinal = text;
-        lastFinalAt = now;
-        options.onFinal(text);
+      for (const text of finals) pending = appendChunk(pending, text);
+      options.onInterim([pending, interim].filter(Boolean).join(" "));
+      if (interim) {
+        // Still talking: wait until the sentence is actually finished.
+        clearFlush();
+      } else {
+        scheduleFlush();
       }
-      if (finals.length) options.onInterim("");
     };
     rec.onerror = (event) => {
       const code = event.error;
@@ -165,6 +208,7 @@ export function createListener(options: {
         options.onInterim("");
         return;
       }
+      if (pending && !flushTimer) scheduleFlush();
       quietRestarts += 1;
       if (quietRestarts > 12) {
         listening = false;
@@ -193,6 +237,8 @@ export function createListener(options: {
       listening = true;
       quietRestarts = 0;
       clearTimer();
+      clearFlush();
+      pending = "";
       if (recognition) {
         try {
           recognition.onend = null;
@@ -208,6 +254,7 @@ export function createListener(options: {
     stop() {
       listening = false;
       clearTimer();
+      flush();
       options.onInterim("");
       options.onState("idle");
       if (!recognition) return;
