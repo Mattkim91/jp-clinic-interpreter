@@ -3,7 +3,7 @@ import { detectPlatform, type PlatformInfo } from "./platform";
 import { politify } from "./polite";
 import { PRESETS, prepare } from "./prepare";
 import { hangulFromTokens } from "./reading";
-import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, japaneseVoices, primeVoices, resolveVoice, setChosenPitch, setChosenVoice, setVoiceGender, speakJapanese, unlockSpeech, type VoiceGender } from "./speak";
+import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, japaneseVoices, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakJapanese, unlockSpeech, type VoiceGender } from "./speak";
 import { createListener, type ListenState } from "./speech";
 import { fetchJaRomaji, translateKoToJa } from "./translate";
 import { getGeminiKey, setGeminiKey, translateWithGemini } from "./gemini";
@@ -401,22 +401,18 @@ function setupSettings(): void {
   const voiceNote = document.querySelector<HTMLParagraphElement>("#voice-note");
   const radios = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="voice-gender"]'));
   const voiceSelect = document.querySelector<HTMLSelectElement>("#voice-select");
-  const pitchInput = document.querySelector<HTMLInputElement>("#voice-pitch");
-  const pitchValue = document.querySelector<HTMLSpanElement>("#voice-pitch-value");
   const testVoice = document.querySelector<HTMLButtonElement>("#test-voice");
   const sample = () => speakJapanese("こんにちは。お尻を上げてください。");
   const showVoice = () => {
     const gender = getVoiceGender();
     for (const radio of radios) radio.checked = radio.value === gender;
-    const { voice, pitch, exact } = resolveVoice(gender);
+    const { voice, exact } = resolveVoice(gender);
     if (voiceSelect) {
       const chosen = getChosenVoice(gender);
       voiceSelect.replaceChildren(new Option("폰 기본 목소리 (자동)", ""));
       for (const v of japaneseVoices()) voiceSelect.add(new Option(v.name, v.name));
       voiceSelect.value = chosen && japaneseVoices().some((v) => v.name === chosen) ? chosen : "";
     }
-    if (pitchInput) pitchInput.value = String(pitch);
-    if (pitchValue) pitchValue.textContent = pitch.toFixed(2);
     if (!voiceNote) return;
     const count = japaneseVoices().length;
     voiceNote.textContent = voice
@@ -434,14 +430,6 @@ function setupSettings(): void {
   }
   voiceSelect?.addEventListener("change", () => {
     setChosenVoice(getVoiceGender(), voiceSelect.value);
-    showVoice();
-    sample();
-  });
-  pitchInput?.addEventListener("input", () => {
-    if (pitchValue) pitchValue.textContent = Number(pitchInput.value).toFixed(2);
-  });
-  pitchInput?.addEventListener("change", () => {
-    setChosenPitch(getVoiceGender(), Number(pitchInput.value));
     showVoice();
     sample();
   });

@@ -84,8 +84,7 @@ export function resolveVoice(gender: VoiceGender = getVoiceGender()): { voice: S
   const chosenName = getChosenVoice(gender);
   const chosen = chosenName ? japaneseVoices().find((voice) => voice.name === chosenName) ?? null : null;
   const picked = chosen ? { voice: chosen, exact: true } : pickJapaneseVoice(gender);
-  const userPitch = getChosenPitch(gender);
-  const pitch = userPitch ?? (picked.exact ? 1 : gender === "male" ? 0.6 : 1.25);
+  const pitch = (picked.exact ? 1 : gender === "male" ? 0.6 : 1.25);
   return { ...picked, pitch };
 }
 
@@ -113,8 +112,8 @@ try {
   /* storage blocked */
 }
 
-const RATE_KEY = "chiryo.rate";
-export const DEFAULT_RATE = 0.9;
+const RATE_KEY = "chiryo.rate2";
+export const DEFAULT_RATE = 1;
 
 export function getSpeechRate(): number {
   try {

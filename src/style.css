@@ -386,3 +386,14 @@ h1 {
   line-height: 1.2;
 }
 .top-actions .text-btn:active { background: var(--green); color: #fff; }
+/* One card per screen; scroll up for earlier ones. */
+.log { scroll-snap-type: y mandatory; gap: 14px; padding-bottom: 6px; }
+.log .card {
+  min-height: calc(100% - 4px);
+  scroll-snap-align: end;
+  scroll-snap-stop: always;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.log .card .speak { top: 16px; }
