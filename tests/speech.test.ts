@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appendChunk, collapseRepeats, endsSentence, flushDelay, PAUSE_AFTER_ENDING, PAUSE_WITHOUT_ENDING } from "../src/speech.ts";
+import { appendChunk, collapseRepeats, endsSentence, endsSentenceJa, flushDelay, PAUSE_AFTER_ENDING, PAUSE_WITHOUT_ENDING, recognitionLang } from "../src/speech.ts";
 
 describe("sentence end detection", () => {
   it("recognizes finished Korean sentences", () => {
@@ -37,5 +37,44 @@ describe("android repeated chunks", () => {
     p = appendChunk(p, "여기 매트에 누워");
     p = appendChunk(p, "누워 보세요");
     assert.equal(p, "여기 매트에 누워 보세요");
+  });
+});
+
+describe("japanese sentence end detection", () => {
+  it("recognizes finished Japanese sentences", () => {
+    for (const t of ["痛いです", "大丈夫です。", "少し疲れました", "できません", "もう一度お願いします", "ちょっと待ってください", "これでいいですか", "痛いですか？", "怖いね", "はい", "痛い", "分かった", "まだ無理だよ", "動かない", "頑張ります!", "少し休みたい…"]) {
+      assert.equal(endsSentenceJa(t), true, t);
+      assert.equal(endsSentence(t, "ja"), true, t);
+    }
+  });
+  it("waits on unfinished Japanese clauses", () => {
+    for (const t of ["右足を", "膝が", "ちょっと腰が痛くて", "歩くと", "それから", "昨日の夜から", "手を上げると肩が"]) {
+      assert.equal(endsSentenceJa(t), false, t);
+    }
+  });
+  it("uses the same pause logic in Japanese", () => {
+    assert.equal(flushDelay("痛いです", "ja"), PAUSE_AFTER_ENDING);
+    assert.equal(flushDelay("膝が", "ja"), PAUSE_WITHOUT_ENDING);
+  });
+  it("keeps Korean detection as the default", () => {
+    assert.equal(flushDelay("무릎 펴세요"), PAUSE_AFTER_ENDING);
+    assert.equal(endsSentence("痛いです"), false);
+    assert.equal(recognitionLang("ja"), "ja-JP");
+    assert.equal(recognitionLang("ko"), "ko-KR");
+  });
+});
+
+describe("japanese chunk merging", () => {
+  it("drops Android re-sent Japanese chunks", () => {
+    let p = appendChunk("", "膝が痛い", "ja");
+    p = appendChunk(p, "膝が痛い", "ja");
+    assert.equal(p, "膝が痛い");
+    p = appendChunk(p, "膝が痛いです", "ja");
+    assert.equal(p, "膝が痛いです");
+  });
+  it("joins Japanese chunks without spaces and merges overlaps", () => {
+    assert.equal(appendChunk("右足が", "少し痛い", "ja"), "右足が少し痛い");
+    assert.equal(appendChunk("右足が少し", "少し痛いです", "ja"), "右足が少し痛いです");
+    assert.equal(collapseRepeats("痛い 痛い です"), "痛い です");
   });
 });

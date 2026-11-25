@@ -4,14 +4,16 @@ import { politify } from "./polite";
 import { PRESET_GROUPS, PRESETS, prepare } from "./prepare";
 import { hangulFromTokens } from "./reading";
 import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, japaneseVoices, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakJapanese, unlockSpeech, type VoiceGender } from "./speak";
-import { createListener, type ListenState } from "./speech";
-import { fetchJaRomaji, translateKoToJa } from "./translate";
-import { getGeminiKey, setGeminiKey, translateWithGemini } from "./gemini";
+import { createListener, type ListenState, type SpeechLang } from "./speech";
+import { fetchJaRomaji, translateJaToKo, translateKoToJa } from "./translate";
+import { getGeminiKey, setGeminiKey, translateJaToKoWithGemini, translateWithGemini } from "./gemini";
 import { loadTokenizer, type Tokenizer } from "./tokenizer";
 import { createWake, type WakeMode } from "./wake";
 
 type Card = {
   id: number;
+  /** "therapist": Korean → Japanese (default). "patient": Japanese → Korean. */
+  speaker: "therapist" | "patient";
   ko: string;
   ja: string;
   reading: string;
@@ -33,6 +35,18 @@ let tokenizer: Tokenizer | null = null;
 let dictError = "";
 let clearArmed = false;
 let autoSpeak = localStorage.getItem("clinic-autospeak") === "1";
+type Mode = "one" | "two";
+const MODE_KEY = "clinic-mode";
+function loadMode(): Mode {
+  try {
+    return localStorage.getItem(MODE_KEY) === "two" ? "two" : "one";
+  } catch {
+    return "one";
+  }
+}
+let mode: Mode = loadMode();
+/** Language the recognizer is (or was last) listening in. */
+let hearLang: SpeechLang = "ko";
 
 const dictReady = loadTokenizer(`${import.meta.env.BASE_URL}kuromoji-dict`)
   .then((built) => {
@@ -71,7 +85,40 @@ async function readingFor(ja: string): Promise<string> {
   return hangul;
 }
 
+async function fillPatient(card: Card): Promise<void> {
+  try {
+    let ko = "";
+    if (getGeminiKey()) {
+      try {
+        ko = await translateJaToKoWithGemini(card.ja);
+      } catch {
+        ko = "";
+      }
+    }
+    if (!ko) ko = await translateJaToKo(card.ja);
+    card.ko = ko;
+    card.status = "ready";
+    card.error = "";
+  } catch (error) {
+    card.status = "error";
+    card.error = friendlyError(error);
+  }
+  render();
+  scrollLog();
+}
+
+function submitPatient(japanese: string): void {
+  const ja = japanese.replace(/\s+/g, " ").trim();
+  if (!ja) return;
+  const card: Card = { id: nextId++, speaker: "patient", ko: "", ja, reading: "", status: "loading", error: "" };
+  cards.push(card);
+  render();
+  scrollLog();
+  void fillPatient(card);
+}
+
 async function fill(card: Card): Promise<void> {
+  if (card.speaker === "patient") return fillPatient(card);
   try {
     const prepared = prepare(card.ko);
     let translated = prepared.overrideJa ?? "";
@@ -101,7 +148,7 @@ async function fill(card: Card): Promise<void> {
 function submit(korean: string): void {
   const ko = korean.replace(/\s+/g, " ").trim();
   if (!ko) return;
-  const card: Card = { id: nextId++, ko, ja: "", reading: "", status: "loading", error: "" };
+  const card: Card = { id: nextId++, speaker: "therapist", ko, ja: "", reading: "", status: "loading", error: "" };
   cards.push(card);
   render();
   scrollLog();
@@ -119,7 +166,7 @@ function retry(id: number): void {
 
 function speakCard(id: number): void {
   const card = cards.find((item) => item.id === id);
-  if (!card || card.status !== "ready" || !card.ja) return;
+  if (!card || card.speaker === "patient" || card.status !== "ready" || !card.ja) return;
   if (!canSpeak()) {
     setToast("이 브라우저는 일본어 소리 내기를 지원하지 않습니다.");
     return;
@@ -134,8 +181,12 @@ function scrollLog(): void {
   log.scrollTo({ top: log.scrollHeight, behavior });
 }
 
+function langName(lang: SpeechLang): string {
+  return lang === "ja" ? "환자 일본어" : "한국어";
+}
+
 function statusText(): string {
-  if (listening === "listening") return "듣는 중";
+  if (listening === "listening") return mode === "two" ? `듣는 중 · ${langName(hearLang)}` : "듣는 중";
   if (listening === "needs-gesture") return "마이크를 다시 눌러 주세요";
   if (listening === "denied") return "마이크 권한이 필요합니다";
   if (listening === "unsupported") return "음성 인식 없음";
@@ -150,9 +201,15 @@ function hintText(): string {
   if (listening === "listening" && wakeMode === "video") {
     return "화면이 꺼지면 자동 잠금을 꺼 주세요. 문장마다 이어서 듣습니다.";
   }
+  if (listening === "listening" && mode === "two") {
+    return hearLang === "ja"
+      ? "환자 일본어를 듣는 중. 내 차례면 ‘내가 말하기’를 누르세요."
+      : "한국어를 듣는 중. 환자 차례면 ‘患者さん’ 버튼을 누르세요.";
+  }
   if (listening === "listening") return "문장이 끝나면 바로 번역됩니다. 화면은 켜 둔 상태입니다.";
   if (platform.kind === "ios") return "아이폰은 문장마다 다시 듣습니다. 멈추면 마이크를 다시 누르세요.";
   if (dictError) return dictError;
+  if (mode === "two") return "말하는 사람 버튼을 누르세요. 다시 누르면 멈춥니다.";
   return "말하면 일본어 카드가 쌓입니다.";
 }
 
@@ -179,11 +236,36 @@ function renderChrome(): void {
   hint.textContent = hintText();
   interimText.textContent = interim;
   interimEl.hidden = !interim;
+  interimEl.classList.toggle("is-ja", mode === "two" && hearLang === "ja");
+  const interimLang = document.querySelector<HTMLElement>("#interim-lang");
+  if (interimLang) {
+    interimLang.hidden = mode !== "two";
+    interimLang.textContent = hearLang === "ja" ? "🇯🇵 환자" : "🇰🇷 나";
+  }
 
   const live = listening === "listening";
   mic.classList.toggle("is-live", live);
   mic.setAttribute("aria-pressed", live ? "true" : "false");
   micLabel.textContent = live ? "음성 입력 중 · 멈추기" : "음성 입력 시작";
+
+  const pair = document.querySelector<HTMLElement>("#mic-pair");
+  mic.hidden = mode === "two";
+  if (pair) pair.hidden = mode !== "two";
+  for (const lang of ["ko", "ja"] as const) {
+    const button = document.querySelector<HTMLButtonElement>(`#mic-${lang}`);
+    const label = document.querySelector<HTMLElement>(`#mic-${lang}-label`);
+    if (!button || !label) continue;
+    const on = live && hearLang === lang;
+    button.classList.toggle("is-live", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+    if (lang === "ko") label.innerHTML = on ? "듣는 중<small>누르면 멈춤</small>" : "내가 말하기";
+    else label.innerHTML = on ? "聞いています<small>(환자 듣는 중 · 누르면 멈춤)</small>" : "患者さん 話す<small>(환자)</small>";
+  }
+  for (const button of document.querySelectorAll<HTMLButtonElement>("#mode [data-mode]")) {
+    const on = button.dataset.mode === mode;
+    button.classList.toggle("is-on", on);
+    button.setAttribute("aria-checked", on ? "true" : "false");
+  }
 
   if (listening === "unsupported") {
     banner.hidden = false;
@@ -204,13 +286,26 @@ function renderCards(): void {
   const log = document.querySelector<HTMLElement>("#log");
   if (!log) return;
   if (!cards.length) {
-    log.innerHTML = `<div class="empty"><p class="empty-title">아직 문장이 없습니다</p><p>마이크를 누르고 환자에게 할 말을 한국어로 하세요. 한 문장이 끝나면 일본어가 큰 글씨로 쌓입니다.</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`;
+    log.innerHTML =
+      mode === "two"
+        ? `<div class="empty"><p class="empty-title">양방향 통역</p><p>내가 말할 때는 <b>🇰🇷 내가 말하기</b>, 환자가 말할 때는 <b>🇯🇵 患者さん</b> 버튼을 누르세요. 환자 말은 한국어로 크게 보여 줍니다.</p><p class="empty-ja" lang="ja">日本語で話すときは「患者さん」ボタンを押してください</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`
+        : `<div class="empty"><p class="empty-title">아직 문장이 없습니다</p><p>마이크를 누르고 환자에게 할 말을 한국어로 하세요. 한 문장이 끝나면 일본어가 큰 글씨로 쌓입니다.</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`;
     return;
   }
 
   log.innerHTML = cards
     .map((card, index) => {
       const newest = index === cards.length - 1 ? " is-newest" : "";
+      if (card.speaker === "patient") {
+        const label = `<p class="who">🇯🇵 환자</p>`;
+        if (card.status === "loading") {
+          return `<article class="card is-patient is-loading${newest}" data-card="${card.id}">${label}<p class="ko-big ja-wait">번역하는 중…</p><p class="ja-src" lang="ja">${escapeHtml(card.ja)}</p></article>`;
+        }
+        if (card.status === "error") {
+          return `<article class="card is-patient is-error${newest}" data-card="${card.id}">${label}<p class="ko-big ja-wait">번역되지 않았습니다</p><p class="error-text">${escapeHtml(card.error)}</p><p class="ja-src" lang="ja">${escapeHtml(card.ja)}</p><button type="button" class="retry" data-retry="${card.id}">다시 번역</button></article>`;
+        }
+        return `<article class="card is-patient${newest}" data-card="${card.id}">${label}<p class="ko-big">${escapeHtml(card.ko)}</p><p class="ja-src" lang="ja">${escapeHtml(card.ja)}</p></article>`;
+      }
       if (card.status === "loading") {
         return `<article class="card is-loading${newest}" data-card="${card.id}"><p class="ja ja-wait">번역하는 중…</p><p class="ko">${escapeHtml(card.ko)}</p></article>`;
       }
@@ -244,7 +339,7 @@ export function startApp(): void {
   const video = document.querySelector<HTMLVideoElement>("#nosleep");
   const wake = video ? createWake(video) : null;
   const listener = createListener({
-    onFinal: (text) => submit(text),
+    onFinal: (text, lang) => (lang === "ja" ? submitPatient(text) : submit(text)),
     onInterim: (text) => {
       interim = text;
       renderChrome();
@@ -312,8 +407,15 @@ export function startApp(): void {
     });
   }
 
-  const mic = document.querySelector<HTMLButtonElement>("#mic");
-  mic?.addEventListener("click", () => {
+  const stopListening = () => {
+    listener.stop();
+    void wake?.release().then(() => {
+      wakeMode = "off";
+      render();
+    });
+  };
+  /** Tap a mic for a language: start it, switch to it, or stop when it is already live. */
+  const toggleMic = (lang: SpeechLang) => {
     unlockSpeech();
     if (!listener.supported) {
       listening = "unsupported";
@@ -321,19 +423,39 @@ export function startApp(): void {
       document.querySelector<HTMLInputElement>("#manual-input")?.focus();
       return;
     }
-    if (listening === "listening") {
-      listener.stop();
-      void wake?.release().then(() => {
-        wakeMode = "off";
-        render();
-      });
+    if (listening === "listening" && hearLang === lang) {
+      stopListening();
       return;
     }
-    listener.start();
-    void wake?.acquire(true).then((mode) => {
-      wakeMode = mode;
-      render();
-    });
+    const wasLive = listening === "listening";
+    hearLang = lang;
+    listener.start(lang);
+    render();
+    if (!wasLive) {
+      void wake?.acquire(true).then((acquired) => {
+        wakeMode = acquired;
+        render();
+      });
+    }
+  };
+
+  document.querySelector<HTMLButtonElement>("#mic")?.addEventListener("click", () => toggleMic("ko"));
+  document.querySelector<HTMLButtonElement>("#mic-ko")?.addEventListener("click", () => toggleMic("ko"));
+  document.querySelector<HTMLButtonElement>("#mic-ja")?.addEventListener("click", () => toggleMic("ja"));
+
+  document.querySelector<HTMLElement>("#mode")?.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-mode]");
+    const next = button?.dataset.mode === "two" ? "two" : button?.dataset.mode === "one" ? "one" : null;
+    if (!next || next === mode) return;
+    mode = next;
+    try {
+      localStorage.setItem(MODE_KEY, mode);
+    } catch {
+      /* storage blocked */
+    }
+    // One-way only listens in Korean: stop a patient (Japanese) session when leaving two-way.
+    if (mode === "one" && listening === "listening" && hearLang === "ja") stopListening();
+    render();
   });
 
   setupSettings();
@@ -366,6 +488,11 @@ export function startApp(): void {
 
   window.__clinic = {
     submit,
+    submitPatient,
+    setMode: (next: Mode) => {
+      mode = next;
+      render();
+    },
     cards: () => cards.map((card) => ({ ...card })),
     dictReady: () => dictReady.then(() => Boolean(tokenizer)),
   };
@@ -380,6 +507,8 @@ declare global {
   interface Window {
     __clinic?: {
       submit: (text: string) => void;
+      submitPatient: (text: string) => void;
+      setMode: (mode: "one" | "two") => void;
       cards: () => Card[];
       dictReady: () => Promise<boolean>;
     };

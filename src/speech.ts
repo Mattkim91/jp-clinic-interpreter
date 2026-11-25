@@ -14,20 +14,36 @@ export function collectUtterance(results: RecSlice[], fromIndex: number): { fina
   return { finals, interim: interim.join(" ") };
 }
 
+export type SpeechLang = "ko" | "ja";
+
+/** BCP-47 tag the recognizer listens in. */
+export function recognitionLang(lang: SpeechLang): string {
+  return lang === "ja" ? "ja-JP" : "ko-KR";
+}
+
 /** Korean sentence-final endings (polite/plain requests, statements, questions). */
 const SENTENCE_END = /(요|다|까|죠|니다|세요|래|자|네|군|지)[\s.?!~。…]*$|[.?!。？！]\s*$/;
 
-/** True when the buffered Korean looks like a complete sentence. */
-export function endsSentence(text: string): boolean {
-  return SENTENCE_END.test(text.trim());
+/** Japanese sentence-final forms (polite/plain statements, requests, questions, particles). */
+const SENTENCE_END_JA =
+  /(です|ます|ました|ません|でした|ましょう|ください|下さい|ない|か|ね|よ|な|わ|た|だ|い)[。？！?!…\s]*$|[。？！?!]\s*$/;
+
+/** True when the buffered text looks like a complete sentence in the given language. */
+export function endsSentence(text: string, lang: SpeechLang = "ko"): boolean {
+  return (lang === "ja" ? SENTENCE_END_JA : SENTENCE_END).test(text.trim());
+}
+
+/** True when the buffered Japanese looks like a complete sentence. */
+export function endsSentenceJa(text: string): boolean {
+  return endsSentence(text, "ja");
 }
 
 /** Silence (ms) to wait before translating: short once a sentence ending is heard, long otherwise. */
 export const PAUSE_AFTER_ENDING = 700;
 export const PAUSE_WITHOUT_ENDING = 3000;
 
-export function flushDelay(text: string): number {
-  return endsSentence(text) ? PAUSE_AFTER_ENDING : PAUSE_WITHOUT_ENDING;
+export function flushDelay(text: string, lang: SpeechLang = "ko"): number {
+  return endsSentence(text, lang) ? PAUSE_AFTER_ENDING : PAUSE_WITHOUT_ENDING;
 }
 
 /**
@@ -55,7 +71,7 @@ export function collapseRepeats(text: string): string {
 }
 
 /** Append a recognized chunk to the pending sentence, merging overlaps that Android re-sends. */
-export function appendChunk(pending: string, chunk: string): string {
+export function appendChunk(pending: string, chunk: string, lang: SpeechLang = "ko"): string {
   const c = collapseRepeats(chunk);
   if (!c) return pending;
   if (!pending) return c;
@@ -67,6 +83,13 @@ export function appendChunk(pending: string, chunk: string): string {
     if (pw.slice(-k).join(" ") === cw.slice(0, k).join(" ")) {
       return collapseRepeats([...pw, ...cw.slice(k)].join(" "));
     }
+  }
+  if (lang === "ja") {
+    // Japanese usually arrives without spaces: merge character overlaps and join without a space.
+    for (let k = Math.min(pending.length, c.length) - 1; k >= 2; k--) {
+      if (pending.endsWith(c.slice(0, k))) return pending + c.slice(k);
+    }
+    return `${pending}${c}`;
   }
   return collapseRepeats(`${pending} ${c}`);
 }
@@ -95,8 +118,10 @@ export type ListenState = "idle" | "listening" | "needs-gesture" | "denied" | "u
 
 export type Listener = {
   supported: boolean;
-  start: () => void;
+  /** Start listening in a language (default Korean). Restarts when already listening in another language. */
+  start: (lang?: SpeechLang) => void;
   stop: () => void;
+  lang: () => SpeechLang;
 };
 
 function getCtor(): RecCtor | null {
@@ -116,7 +141,7 @@ function slicesOf(event: RecEvent): RecSlice[] {
 }
 
 export function createListener(options: {
-  onFinal: (text: string) => void;
+  onFinal: (text: string, lang: SpeechLang) => void;
   onInterim: (text: string) => void;
   onState: (state: ListenState) => void;
   onError: (message: string) => void;
@@ -132,6 +157,7 @@ export function createListener(options: {
       stop() {
         options.onState("unsupported");
       },
+      lang: () => "ko",
     };
   }
 
@@ -148,6 +174,7 @@ export function createListener(options: {
   let quietRestarts = 0;
   let pending = "";
   let flushTimer = 0;
+  let currentLang: SpeechLang = "ko";
 
   const clearFlush = () => {
     if (flushTimer) window.clearTimeout(flushTimer);
@@ -159,13 +186,13 @@ export function createListener(options: {
     const text = collapseRepeats(pending);
     pending = "";
     options.onInterim("");
-    if (text) options.onFinal(text);
+    if (text) options.onFinal(text, currentLang);
   };
 
   const scheduleFlush = () => {
     clearFlush();
     if (!pending) return;
-    flushTimer = window.setTimeout(flush, flushDelay(pending));
+    flushTimer = window.setTimeout(flush, flushDelay(pending, currentLang));
   };
 
   const clearTimer = () => {
@@ -186,7 +213,7 @@ export function createListener(options: {
     if (!listening) return;
     if (!recognition) recognition = new Ctor();
     const rec = recognition;
-    rec.lang = "ko-KR";
+    rec.lang = recognitionLang(currentLang);
     rec.continuous = continuous;
     rec.interimResults = true;
     rec.onstart = () => {
@@ -195,8 +222,8 @@ export function createListener(options: {
     rec.onresult = (event) => {
       quietRestarts = 0;
       const { finals, interim } = collectUtterance(slicesOf(event), event.resultIndex);
-      for (const text of finals) pending = appendChunk(pending, text);
-      options.onInterim(interim ? appendChunk(pending, interim) : pending);
+      for (const text of finals) pending = appendChunk(pending, text, currentLang);
+      options.onInterim(interim ? appendChunk(pending, interim, currentLang) : pending);
       if (interim) {
         // Still talking: wait until the sentence is actually finished.
         clearFlush();
@@ -264,8 +291,15 @@ export function createListener(options: {
 
   return {
     supported: true,
-    start() {
-      if (listening) return;
+    lang: () => currentLang,
+    start(lang: SpeechLang = "ko") {
+      if (listening && lang === currentLang) return;
+      if (listening) {
+        // Switching language: send what was heard so far in the old language first.
+        clearTimer();
+        flush();
+      }
+      currentLang = lang;
       listening = true;
       quietRestarts = 0;
       clearTimer();

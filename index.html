@@ -32,7 +32,7 @@
     <div id="app" class="app">
       <header class="top">
         <div class="titles">
-          <h1>치료 통역 <span class="app-version">v2.2</span></h1>
+          <h1>치료 통역 <span class="app-version">v2.3</span></h1>
           <p id="status" class="status">준비 중</p>
         </div>
         <div class="top-actions">
@@ -69,6 +69,7 @@
       <div id="log" class="log" role="log" aria-relevant="additions"></div>
       <p id="interim" class="interim" hidden>
         <span class="dot" aria-hidden="true"></span>
+        <span id="interim-lang" class="interim-lang" hidden></span>
         <span id="interim-text"></span>
       </p>
       <div class="dock">
@@ -84,10 +85,16 @@
           />
           <button type="submit">번역</button>
         </form>
-        <label class="auto">
-          <input id="auto-speak" type="checkbox" />
-          <span>끝나면 읽어 주기</span>
-        </label>
+        <div class="dock-row">
+          <label class="auto">
+            <input id="auto-speak" type="checkbox" />
+            <span>끝나면 읽어 주기</span>
+          </label>
+          <div id="mode" class="mode-toggle" role="radiogroup" aria-label="통역 방향">
+            <button type="button" role="radio" data-mode="one" aria-checked="true">단방향</button>
+            <button type="button" role="radio" data-mode="two" aria-checked="false">양방향</button>
+          </div>
+        </div>
         <p id="hint" class="hint"></p>
         <button id="mic" type="button" class="mic" aria-pressed="false">
           <svg class="mic-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -106,6 +113,16 @@
           </svg>
           <span id="mic-label">음성 입력 시작</span>
         </button>
+        <div id="mic-pair" class="mic-pair" hidden>
+          <button id="mic-ko" type="button" class="mic mic-side mic-ko" aria-pressed="false">
+            <span class="mic-flag" aria-hidden="true">🇰🇷</span>
+            <span class="mic-side-label" id="mic-ko-label">내가 말하기</span>
+          </button>
+          <button id="mic-ja" type="button" class="mic mic-side mic-ja" aria-pressed="false" lang="ja">
+            <span class="mic-flag" aria-hidden="true">🇯🇵</span>
+            <span class="mic-side-label" id="mic-ja-label">患者さん 話す<small>(환자)</small></span>
+          </button>
+        </div>
       </div>
     </div>
     <video id="nosleep" playsinline muted loop preload="auto" src="%BASE_URL%silence.mp4" aria-hidden="true"></video>

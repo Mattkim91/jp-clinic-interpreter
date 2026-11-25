@@ -88,6 +88,28 @@ export async function translateKoToJa(korean: string): Promise<string> {
   throw new Error(message);
 }
 
+/** Keyless Japanese (patient) → Korean via the public Google endpoints. No politify. */
+export async function translateJaToKo(japanese: string): Promise<string> {
+  const q = encodeURIComponent(japanese);
+  const attempts = [
+    async () => parseGtx(await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl=ko&dt=t&dj=1&q=${q}`)),
+    async () => parseClients5(await getJson(`https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=ja&tl=ko&q=${q}`)),
+    async () => parseGtx(await getJson(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl=ko&dt=t&q=${q}`)),
+  ];
+  let last: unknown;
+  for (let i = 0; i < attempts.length; i++) {
+    try {
+      const ko = (await attempts[i]()).replace(/\s+/g, " ").trim();
+      if (ko && ko !== japanese.trim()) return ko;
+      last = new Error("빈 번역");
+    } catch (error) {
+      last = error;
+    }
+    await sleep(350 * (i + 1));
+  }
+  throw last instanceof Error ? last : new Error("번역에 실패했습니다");
+}
+
 export async function fetchJaRomaji(japanese: string): Promise<string> {
   const q = encodeURIComponent(japanese);
   const urls = [
