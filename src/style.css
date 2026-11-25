@@ -347,3 +347,11 @@ h1 {
   .mic { min-height: 64px; }
   .hint { display: none; }
 }
+
+.app-version {
+  font-size: 0.55em;
+  font-weight: 500;
+  opacity: 0.6;
+  margin-left: 0.3em;
+  vertical-align: middle;
+}

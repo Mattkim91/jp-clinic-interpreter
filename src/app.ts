@@ -174,7 +174,7 @@ function renderChrome(): void {
   const live = listening === "listening";
   mic.classList.toggle("is-live", live);
   mic.setAttribute("aria-pressed", live ? "true" : "false");
-  micLabel.textContent = live ? "듣는 중 · 멈추기" : "듣기 시작";
+  micLabel.textContent = live ? "음성 입력 중 · 멈추기" : "음성 입력 시작";
 
   if (listening === "unsupported") {
     banner.hidden = false;
