@@ -1,5 +1,5 @@
 const KEY_STORAGE = "chiryo.geminiKey";
-const MODELS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const MODELS = ["gemini-flash-lite-latest", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
 const TIMEOUT_MS = 9000;
 
 const INSTRUCTION = [
@@ -38,7 +38,7 @@ async function callModel(model: string, key: string, korean: string): Promise<st
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: INSTRUCTION }] },
       contents: [{ role: "user", parts: [{ text: korean }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 256, thinkingConfig: { thinkingBudget: 0 } },
+      generationConfig: { temperature: 0.2, maxOutputTokens: 256 },
     }),
   });
   if (!response.ok) {
