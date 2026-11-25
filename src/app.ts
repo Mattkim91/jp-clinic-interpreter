@@ -411,7 +411,7 @@ function setupSettings(): void {
     const { voice, pitch, exact } = resolveVoice(gender);
     if (voiceSelect) {
       const chosen = getChosenVoice(gender);
-      voiceSelect.replaceChildren(new Option("자동 선택", ""));
+      voiceSelect.replaceChildren(new Option("폰 기본 목소리 (자동)", ""));
       for (const v of japaneseVoices()) voiceSelect.add(new Option(v.name, v.name));
       voiceSelect.value = chosen && japaneseVoices().some((v) => v.name === chosen) ? chosen : "";
     }
@@ -422,7 +422,7 @@ function setupSettings(): void {
     voiceNote.textContent = voice
       ? `사용 중: ${voice.name} · 이 폰의 일본어 음성 ${count}개` +
         (!exact ? " (맞는 성별 음성이 없어 음높이로 조절)" : "")
-      : "이 폰에서 일본어 음성을 찾지 못했어요";
+      : `사용 중: 폰 기본 일본어 목소리 · 이 폰의 일본어 음성 ${count}개`;
   };
   for (const radio of radios) {
     radio.addEventListener("change", () => {

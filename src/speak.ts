@@ -94,12 +94,23 @@ export function pickJapaneseVoice(gender: VoiceGender = getVoiceGender()): { voi
   const voices = japaneseVoices();
   const wanted = gender === "male" ? matchFirst(voices, MALE, FEMALE) : matchFirst(voices, FEMALE, MALE);
   if (wanted) return { voice: wanted, exact: true };
-  // Unknown voice names count as female (most default Japanese voices are female).
-  if (gender === "female") {
-    const notMale = voices.find((voice) => !MALE.some((p) => p.test(voice.name)));
-    if (notMale) return { voice: notMale, exact: true };
-  }
+  // No clearly-named voice: leave the voice unset so the phone's own default
+  // (e.g. Samsung TTS "음성 1") speaks. Most default Japanese voices are female.
+  if (gender === "female") return { voice: null, exact: true };
   return { voice: voices[0] ?? null, exact: false };
+}
+
+// v1.8: earlier builds could save a voice/pitch that forced the male voice; reset once.
+try {
+  if (!localStorage.getItem("chiryo.voiceReset18")) {
+    for (const g of ["female", "male"]) {
+      localStorage.removeItem(`chiryo.voice.${g}`);
+      localStorage.removeItem(`chiryo.pitch.${g}`);
+    }
+    localStorage.setItem("chiryo.voiceReset18", "1");
+  }
+} catch {
+  /* storage blocked */
 }
 
 export function primeVoices(): void {
