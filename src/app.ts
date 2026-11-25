@@ -372,7 +372,7 @@ function langName(lang: SpeechLang): string {
 }
 
 function statusText(): string {
-  if (mode === "auto" && autoOn) return `자동 통역 중 · 한국어 ↔ ${LANGS[patientLang].name}`;
+  if (mode === "auto" && autoOn) return `동시통역 중 · 한국어 ↔ ${LANGS[patientLang].name}`;
   if (mode === "auto" && listening === "unsupported") return `대기 · ${LANGS[patientLang].name}`;
   if (listening === "listening") return mode === "two" ? `듣는 중 · ${langName(hearLang)}` : "듣는 중";
   if (listening === "needs-gesture") return "마이크를 다시 눌러 주세요";
@@ -385,7 +385,7 @@ function statusText(): string {
 function hintText(): string {
   if (mode === "auto") {
     if (autoError) return autoError;
-    if (!getGeminiKey()) return "자동 모드는 Gemini 키가 필요합니다. 설정에서 넣어 주세요.";
+    if (!getGeminiKey()) return "동시통역은 Gemini 키가 필요합니다. 설정에서 넣어 주세요.";
     if (!autoOn) return `한국어와 ${LANGS[patientLang].name}를 알아서 구분해 통역하고 읽어 줍니다.`;
     if (aloud.length) return "읽어 주는 중에는 듣지 않습니다. 끝난 뒤 말해 주세요.";
     return "한 사람씩 말하고 잠깐 쉬면 바로 통역합니다.";
@@ -444,7 +444,7 @@ function renderChrome(): void {
   mic.classList.toggle("is-live", live);
   mic.setAttribute("aria-pressed", live ? "true" : "false");
   micLabel.textContent =
-    mode === "auto" ? (live ? "자동 통역 중 · 멈추기" : "자동 통역 시작") : live ? "음성 입력 중 · 멈추기" : "음성 입력 시작";
+    mode === "auto" ? (live ? "동시통역 중 · 멈추기" : "동시통역 시작") : live ? "음성 입력 중 · 멈추기" : "음성 입력 시작";
   const autoLabel = document.querySelector<HTMLElement>("#auto-label");
   if (autoLabel) autoLabel.hidden = mode === "auto";
 
@@ -498,7 +498,7 @@ function renderCards(): void {
   if (!cards.length) {
     log.innerHTML =
       mode === "auto"
-        ? `<div class="empty"><p class="empty-title">자동 통역</p><p><b>자동 통역 시작</b>을 한 번 누르세요. 한국어가 들리면 ${info.name}로, ${info.name}가 들리면 한국어로 바로 읽어 줍니다.</p><p class="empty-note">말소리가 Google Gemini로 전송됩니다. 환자에게 먼저 알려 주세요.${getGeminiKey() ? "" : "<br>Gemini 키가 필요합니다 (설정)."}</p></div>`
+        ? `<div class="empty"><p class="empty-title">동시통역</p><p><b>동시통역 시작</b>을 한 번 누르세요. 한국어가 들리면 ${info.name}로, ${info.name}가 들리면 한국어로 바로 읽어 줍니다.</p><p class="empty-note">말소리가 Google Gemini로 전송됩니다. 환자에게 먼저 알려 주세요.${getGeminiKey() ? "" : "<br>Gemini 키가 필요합니다 (설정)."}</p></div>`
         : mode === "two"
         ? `<div class="empty"><p class="empty-title">양방향 통역</p><p>내가 말할 때는 <b>🇰🇷 내가 말하기</b>, 환자가 말할 때는 <b>${info.flag} <bdi>${info.patientButton}</bdi></b> 버튼을 누르세요. 환자 말은 한국어로 크게 보여 줍니다.</p><p class="empty-ja" lang="${patientLang}" dir="${info.dir}">${info.invite}</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`
         : `<div class="empty"><p class="empty-title">아직 문장이 없습니다</p><p>마이크를 누르고 환자에게 할 말을 한국어로 하세요. 한 문장이 끝나면 ${info.name}가 큰 글씨로 쌓입니다.</p><p class="empty-note">${escapeHtml(installLine())}</p></div>`;
