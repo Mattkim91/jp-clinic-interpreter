@@ -125,8 +125,21 @@ async function callModel(model: string, key: string, text: string, instruction: 
   return out;
 }
 
+/** Same sentence asked twice within a short time (started early at a pause): one request. */
+const recent = new Map<string, { at: number; answer: Promise<string> }>();
+const RECENT_MS = 20000;
+
 function runGemini(text: string, instruction: string, key: string, lines = 1, budget = TEXT_BUDGET_MS): Promise<string> {
-  return tryModels(key, budget, (model, timeout) => callModel(model, key, text, instruction, lines, timeout));
+  const id = `${key}\n${lines}\n${instruction}\n${text.replace(/\s+/g, " ").trim()}`;
+  const now = Date.now();
+  for (const [old, item] of recent) if (now - item.at > RECENT_MS) recent.delete(old);
+  const known = recent.get(id);
+  if (known) return known.answer;
+  const answer = tryModels(key, budget, (model, timeout) => callModel(model, key, text, instruction, lines, timeout));
+  recent.set(id, { at: now, answer });
+  // A failure is not kept: the next try asks again.
+  answer.catch(() => recent.delete(id));
+  return answer;
 }
 
 /** Ask the models one after another, all within `budget` milliseconds. */

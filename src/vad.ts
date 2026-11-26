@@ -3,7 +3,9 @@
 /** Quiet time that ends a spoken piece. Shorter would cut Korean before its sentence-final negation. */
 export const SILENCE_MS = 700;
 /** Quiet time after which the piece is already sent ahead, in case this was the end. */
-export const DRAFT_MS = 360;
+export const DRAFT_MS = 300;
+/** A breath this long is when a translation may already be started, in case the sentence is over. */
+export const HUSH_MS = 150;
 /** Silence kept at the end of what is sent. */
 const TAIL_MS = 240;
 /** Below this share of the voice's own loudness it counts as quiet, so room noise cannot hold a piece open. */
@@ -24,6 +26,8 @@ export type Segmenter = {
   /** Hand over what was heard so far (if it is long enough) and start fresh. */
   flush: () => void;
   speaking: () => boolean;
+  /** How long it has been quiet inside the current piece (0 outside one). */
+  quietMs: () => number;
 };
 
 function rmsOf(frame: Float32Array): number {
@@ -49,6 +53,8 @@ export function createSegmenter(options: {
   onSpeaking: (speaking: boolean) => void;
   /** First short pause of a piece (at most once per piece). */
   onDraft?: (samples: Float32Array) => void;
+  /** Every pause of HUSH_MS inside a piece. */
+  onHush?: () => void;
 }): Segmenter {
   const frameSize = Math.round((options.sampleRate * FRAME_MS) / 1000);
   let rest = new Float32Array(0);
@@ -113,6 +119,7 @@ export function createSegmenter(options: {
       } else {
         quiet += 1;
       }
+      if (quiet === Math.ceil(HUSH_MS / FRAME_MS) && enough()) options.onHush?.();
       if (drafted < 0 && enough() && quiet * FRAME_MS >= DRAFT_MS && options.onDraft) {
         drafted = voiced;
         options.onDraft(trimmed(piece));
@@ -153,6 +160,7 @@ export function createSegmenter(options: {
       finish();
     },
     speaking: () => piece !== null,
+    quietMs: () => (piece ? quiet * FRAME_MS : 0),
   };
 }
 
@@ -169,6 +177,14 @@ export function downsample(samples: Float32Array, from: number, to: number): Flo
     out[i] = sum / (end - start);
   }
   return out;
+}
+
+/** Raw 16-bit little-endian samples (what the live API takes). */
+export function encodePcm(samples: Float32Array): Uint8Array {
+  const bytes = new Uint8Array(samples.length * 2);
+  const view = new DataView(bytes.buffer);
+  samples.forEach((value, i) => view.setInt16(i * 2, Math.max(-1, Math.min(1, value)) * 0x7fff, true));
+  return bytes;
 }
 
 /** 16-bit mono WAV. */

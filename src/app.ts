@@ -1,5 +1,6 @@
 import { arabicLatinToHangul } from "./arabic";
 import { createAutoMic, type AutoMic } from "./automic";
+import { createLiveStt, scriptLang, type LiveStt } from "./livestt";
 import { romajiToHangul } from "./hangul";
 import { LANG_ORDER, LANGS, isPatientLang, loadPatientLang, savePatientLang, type PatientLang } from "./lang";
 import { addPhrase, isCustom, loadPhrases, phraseGroups, removePhrase, resetPhrases, savePhrases, toggleFavorite, visiblePhrases } from "./myphrases";
@@ -12,7 +13,7 @@ import { politify } from "./polite";
 import { normalize, prepare, rewriteQuery } from "./prepare";
 import { hangulFromTokens } from "./reading";
 import { canSpeak, getChosenVoice, getSpeechRate, setSpeechRate, getVoiceGender, primeVoices, resolveVoice, setChosenVoice, setVoiceGender, speakText, stopSpeaking, unlockSpeech, voiceMissing, voicesFor, type VoiceGender } from "./speak";
-import { createListener, type Listener, type ListenState, type SpeechLang } from "./speech";
+import { createListener, endsSentence, type Listener, type ListenState, type SpeechLang } from "./speech";
 import { fetchArabicLatin, fetchJaRomaji, translateFromKo, translateToKo } from "./translate";
 import { getGeminiKey, interpretAudio, setGeminiKey, translateToKoWithGemini, translateToWithGemini, translateWithGemini, warmGemini } from "./gemini";
 import { loadTokenizer, type Tokenizer } from "./tokenizer";
@@ -98,6 +99,8 @@ function micWouldHear(spoken: SpeechLang, mic: SpeechLang): boolean {
 function readAloud(text: string, lang: SpeechLang, queue = false, id?: number): void {
   if (autoOn) {
     autoMic?.pause();
+    live?.pause();
+    liveText = "";
     const now = Date.now();
     spokenLately = [...spokenLately.filter((item) => now - item.at < 20000), { text, at: now }];
   } else if (micWouldHear(lang, hearLang)) listener?.hold();
@@ -109,7 +112,10 @@ function readAloud(text: string, lang: SpeechLang, queue = false, id?: number): 
       paintSpeak();
       // A short tail so the last syllable is not heard.
       window.setTimeout(() => {
-        if (!aloud.length) autoMic?.resume();
+        if (!aloud.length) {
+          autoMic?.resume();
+          live?.resume();
+        }
         if (mode === "auto") renderChrome();
         if (!aloud.some((item) => micWouldHear(item.lang, hearLang))) listener?.release();
       }, 300);
@@ -120,7 +126,10 @@ function readAloud(text: string, lang: SpeechLang, queue = false, id?: number): 
     paintSpeak();
   } else {
     listener?.release();
-    if (!aloud.length) autoMic?.resume();
+    if (!aloud.length) {
+      autoMic?.resume();
+      live?.resume();
+    }
   }
 }
 
@@ -132,12 +141,14 @@ let waitingSince = 0;
 const INTERIM_STALE = 6000;
 /** Auto mode: noise can look like someone talking, so a translation never waits long for it. */
 const AUTO_WAIT = 2000;
+/** Quiet this long counts as finished talking, even before the piece is closed. */
+const TALK_GAP_MS = 250;
 
 function drainWaiting(): void {
   window.clearTimeout(waitTimer);
   if (!waiting.length) return;
   const talking = autoOn
-    ? autoHeard && Date.now() - Math.max(autoSince, waitingSince) < AUTO_WAIT
+    ? autoHeard && (autoMic?.quietMs() ?? 0) < TALK_GAP_MS && Date.now() - Math.max(autoSince, waitingSince) < AUTO_WAIT
     : interim && hearLang !== "ko" && Date.now() - interimAt < INTERIM_STALE;
   if (talking) {
     waitTimer = window.setTimeout(drainWaiting, autoOn ? 100 : 300);
@@ -179,6 +190,11 @@ function autoRead(text: string, lang: SpeechLang, id: number): void {
   }
   if (!waiting.length) waitingSince = Date.now();
   waiting.push({ text, lang, id });
+  const since = stoppedAt.get(id);
+  if (since) {
+    autoDelay = Date.now() - since;
+    stoppedAt.delete(id);
+  }
   drainWaiting();
 }
 
@@ -411,6 +427,101 @@ let draft: { answer: Promise<Turn[]>; stop: AbortController; lang: PatientLang }
 let noDraftUntil = 0;
 /** Voice stopped → reading starts, for the last sentence. */
 let autoDelay = 0;
+/** Live transcription; null when off or given up for this session. */
+let live: LiveStt | null = null;
+/** Live transcription failed: recordings only until the app is opened again. */
+let liveBroken = "";
+let liveText = "";
+/** The live text of this spoken piece was already used at its first pause. */
+let liveTaken = false;
+/** When the voice stopped, per card, to show how long it took. */
+const stoppedAt = new Map<number, number>();
+
+function startLive(): void {
+  live?.close();
+  live = null;
+  if (liveBroken) return;
+  live = createLiveStt({
+    key: getGeminiKey(),
+    lang: patientLang,
+    onText: (text) => {
+      liveText = text;
+      renderChrome();
+    },
+    onBroken: (reason) => {
+      liveBroken = reason || "연결 실패";
+      live = null;
+      liveText = "";
+      renderChrome();
+    },
+  });
+}
+
+function stopLive(): void {
+  live?.close();
+  live = null;
+  liveText = "";
+  liveTaken = false;
+}
+
+/** Use what live transcription heard; false when it heard nothing, so the recording is used instead. */
+async function useLiveText(quietMs: number): Promise<boolean> {
+  if (!live?.ready() || !live.text()) return false;
+  const lang = patientLang;
+  const stopped = Date.now() - quietMs;
+  const text = await live.take();
+  liveText = "";
+  renderChrome();
+  const side = scriptLang(text, lang);
+  if (!side) return true;
+  const now = Date.now();
+  if (isEcho(text, spokenLately.filter((item) => now - item.at < 20000).map((item) => item.text))) return true;
+  const before = nextId;
+  if (side === "ko") submit(text, lang);
+  else submitPatient(text, lang);
+  if (nextId > before) stoppedAt.set(before, stopped);
+  return true;
+}
+
+/** A breath: start translating what was heard, so it is ready if this was the end. */
+function hushPiece(): void {
+  const text = live?.ready() ? live.text() : "";
+  const side = text ? scriptLang(text, patientLang) : null;
+  if (!side || !getGeminiKey()) return;
+  const lang = patientLang;
+  const ignore = () => {};
+  if (side !== "ko") translateToKoWithGemini(text, lang).catch(ignore);
+  else if (lang !== "ja") {
+    if (!fixedPhrase(text, lang)) translateToWithGemini(text, lang).catch(ignore);
+  } else if (!prepare(text).overrideJa) translateWithGemini(text).catch(ignore);
+}
+
+/** First short pause: if the sentence is clearly over, translate now instead of waiting. */
+function draftPiece(wav: string): void {
+  const text = live?.ready() ? live.text() : "";
+  if (text) {
+    const side = scriptLang(text, patientLang);
+    if (side && endsSentence(text, side)) {
+      liveTaken = true;
+      void useLiveText(300);
+    }
+    return;
+  }
+  draftRecording(wav);
+}
+
+function endPiece(wav: string, info: { draftHolds: boolean; quietMs: number }): void {
+  const taken = liveTaken && info.draftHolds;
+  liveTaken = false;
+  if (taken) {
+    dropDraft();
+    return;
+  }
+  void useLiveText(info.quietMs).then((used) => {
+    if (used) dropDraft();
+    else hearRecording(wav, info);
+  });
+}
 
 function dropDraft(): void {
   draft?.stop.abort();
@@ -541,7 +652,9 @@ function hintText(): string {
     if (!getGeminiKey()) return "동시통역은 Gemini 키가 필요합니다. 설정에서 넣어 주세요.";
     if (!autoOn) return `한국어와 ${LANGS[patientLang].name}를 알아서 구분해 통역하고 읽어 줍니다.`;
     if (aloud.length) return "읽어 주는 중에는 듣지 않습니다. ‘읽기 멈춤’을 누르면 바로 듣습니다.";
-    return `한 사람씩 말하고 잠깐 쉬면 바로 통역합니다.${autoDelay ? ` (방금 ${(autoDelay / 1000).toFixed(1)}초)` : ""}`;
+    const how = live?.ready() ? "실시간" : liveBroken ? "녹음 방식" : "";
+    const note = [autoDelay ? `방금 ${(autoDelay / 1000).toFixed(1)}초` : "", how].filter(Boolean).join(" · ");
+    return `한 사람씩 말하고 잠깐 쉬면 바로 통역합니다.${note ? ` (${note})` : ""}`;
   }
   if (wakeMode === "unsupported" && listening === "listening") {
     return "화면 켜 두기를 지원하지 않습니다. 자동 잠금을 꺼 주세요.";
@@ -582,7 +695,7 @@ function renderChrome(): void {
 
   status.textContent = statusText();
   hint.textContent = hintText();
-  const doing = mode !== "auto" ? interim : autoHeard ? "듣는 중…" : autoBusy ? "통역하는 중…" : "";
+  const doing = mode !== "auto" ? interim : liveText || (autoHeard ? "듣는 중…" : autoBusy ? "통역하는 중…" : "");
   interimText.textContent = doing;
   interimEl.hidden = !doing;
   interimEl.classList.toggle("is-patient", mode === "two" && hearLang !== "ko");
@@ -823,8 +936,10 @@ export function startApp(): void {
   }
 
   autoMic = createAutoMic({
-    onSegment: hearRecording,
-    onDraft: draftRecording,
+    onSegment: endPiece,
+    onDraft: draftPiece,
+    onPcm: (pcm) => live?.send(pcm),
+    onHush: hushPiece,
     onSpeaking: (speaking) => {
       autoHeard = speaking;
       if (speaking) {
@@ -836,6 +951,7 @@ export function startApp(): void {
       if (!speaking) drainWaiting();
     },
     onLost: () => {
+      stopLive();
       autoOn = false;
       autoHeard = false;
       listening = "needs-gesture";
@@ -845,6 +961,7 @@ export function startApp(): void {
   });
   const stopAuto = () => {
     autoMic?.stop();
+    stopLive();
     dropDraft();
     autoDelay = 0;
     autoOn = false;
@@ -878,10 +995,12 @@ export function startApp(): void {
     stopSpeaking();
     autoOn = true;
     warmGemini();
+    startLive();
     listening = "listening";
     hearLang = "ko";
     render();
     autoMic?.start().catch((error: unknown) => {
+      stopLive();
       autoOn = false;
       listening = (error as { name?: string })?.name === "NotAllowedError" ? "denied" : "idle";
       if (listening === "idle") autoError = "마이크를 열지 못했습니다. 다시 눌러 주세요.";
@@ -960,6 +1079,8 @@ export function startApp(): void {
     patientLang = next;
     savePatientLang(next);
     if (next === "ja") void loadDict();
+    // Live transcription was told which languages to expect.
+    if (autoOn) startLive();
     render();
     scrollLog();
   };

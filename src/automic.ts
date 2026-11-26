@@ -1,4 +1,4 @@
-import { createSegmenter, downsample, encodeWav, toBase64, type Segmenter } from "./vad";
+import { createSegmenter, downsample, encodePcm, encodeWav, toBase64, type Segmenter } from "./vad";
 
 /** Open microphone for auto mode: hands over each spoken piece as a 16 kHz WAV (base64). */
 export type AutoMic = {
@@ -8,6 +8,8 @@ export type AutoMic = {
   pause: () => void;
   resume: () => void;
   speaking: () => boolean;
+  /** Quiet time inside the current spoken piece. */
+  quietMs: () => number;
 };
 
 const RATE = 16000;
@@ -35,6 +37,9 @@ export function createAutoMic(options: {
   onSegment: (wav: string, info: { draftHolds: boolean; quietMs: number }) => void;
   /** Probably the end of what is being said: worth sending ahead. */
   onDraft: (wav: string) => void;
+  /** Every ~100 ms of sound as 16 kHz PCM (base64), for live transcription. Not called while paused. */
+  onPcm?: (pcm: string) => void;
+  onHush?: () => void;
   onSpeaking: (speaking: boolean) => void;
   /** The microphone was taken away (phone call, unplugged, ...). */
   onLost: () => void;
@@ -45,8 +50,25 @@ export function createAutoMic(options: {
   let paused = false;
   let session = 0;
 
+  let pcm: Float32Array[] = [];
+  let pcmLength = 0;
+  let rate = RATE;
   const push = (data: Float32Array) => {
-    if (!paused) segmenter?.push(data);
+    if (paused) return;
+    segmenter?.push(data);
+    if (!options.onPcm) return;
+    pcm.push(data);
+    pcmLength += data.length;
+    if (pcmLength < rate / 10) return;
+    const all = new Float32Array(pcmLength);
+    let at = 0;
+    for (const part of pcm) {
+      all.set(part, at);
+      at += part.length;
+    }
+    pcm = [];
+    pcmLength = 0;
+    options.onPcm(toBase64(encodePcm(downsample(all, rate, RATE))));
   };
 
   const close = () => {
@@ -93,12 +115,16 @@ export function createAutoMic(options: {
             options.onLost();
           };
         }
+        rate = context.sampleRate;
+        pcm = [];
+        pcmLength = 0;
         const wav = (samples: Float32Array) =>
           toBase64(encodeWav(downsample(samples, context.sampleRate, RATE), Math.min(RATE, context.sampleRate)));
         segmenter = createSegmenter({
           sampleRate: context.sampleRate,
           onSegment: (samples, info) => options.onSegment(wav(samples), info),
           onDraft: (samples) => options.onDraft(wav(samples)),
+          onHush: () => options.onHush?.(),
           onSpeaking: options.onSpeaking,
         });
         const source = context.createMediaStreamSource(media);
@@ -140,5 +166,6 @@ export function createAutoMic(options: {
       wakeContext();
     },
     speaking: () => segmenter?.speaking() ?? false,
+    quietMs: () => segmenter?.quietMs() ?? 0,
   };
 }
