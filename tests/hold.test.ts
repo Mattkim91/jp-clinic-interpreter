@@ -25,7 +25,81 @@ class FakeRec {
   hear(transcript: string) {
     this.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript } }] });
   }
+  partly(transcript: string) {
+    this.onresult?.({ resultIndex: 0, results: [{ isFinal: false, 0: { transcript } }] });
+  }
 }
+
+describe("sending a finished sentence before the recognizer confirms it", () => {
+  let finals: string[] = [];
+  let listener: Listener;
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  beforeEach(() => {
+    FakeRec.made = [];
+    finals = [];
+    (globalThis as Record<string, unknown>).window = { SpeechRecognition: FakeRec, setTimeout, clearTimeout };
+    listener = createListener({ onFinal: (text) => finals.push(text), onInterim: () => {}, onState: () => {}, onError: () => {}, kind: "android" });
+    listener.start("ko");
+  });
+  afterEach(() => {
+    listener.stop();
+    delete (globalThis as Record<string, unknown>).window;
+  });
+
+  it("counts the 0.5 s from when the words stop, and makes one card when the confirmation comes late", async () => {
+    const rec = FakeRec.made[0];
+    rec.partly("무릎을 천천히");
+    rec.partly("무릎을 천천히 펴 보세요");
+    await wait(420);
+    assert.deepEqual(finals, []);
+    await wait(150);
+    assert.deepEqual(finals, ["무릎을 천천히 펴 보세요"]);
+    rec.hear("무릎을 천천히 펴 보세요.");
+    await wait(800);
+    assert.deepEqual(finals, ["무릎을 천천히 펴 보세요"]);
+  });
+
+  it("waits again when more words come, and does not cut a sentence that goes on", async () => {
+    const rec = FakeRec.made[0];
+    rec.partly("숨을 참으세요");
+    await wait(300);
+    rec.partly("숨을 참으세요 아니 참지 마세요");
+    await wait(380);
+    assert.deepEqual(finals, []);
+    await wait(200);
+    assert.deepEqual(finals, ["숨을 참으세요 아니 참지 마세요"]);
+  });
+
+  it("does not hurry a sentence that has not ended", async () => {
+    const rec = FakeRec.made[0];
+    rec.partly("숨 참지");
+    await wait(900);
+    assert.deepEqual(finals, []);
+    rec.hear("숨 참지 마세요");
+    await wait(800);
+    assert.deepEqual(finals, ["숨 참지 마세요"]);
+  });
+
+  it("keeps the timing when the confirmation comes during the wait", async () => {
+    const rec = FakeRec.made[0];
+    rec.partly("엉덩이 들어보세요");
+    await wait(300);
+    rec.hear("엉덩이 들어보세요");
+    await wait(260);
+    assert.deepEqual(finals, ["엉덩이 들어보세요"]);
+  });
+
+  it("keeps words that came after a sentence already sent", async () => {
+    const rec = FakeRec.made[0];
+    rec.partly("일어나세요");
+    await wait(560);
+    assert.deepEqual(finals, ["일어나세요"]);
+    rec.hear("일어나세요 천천히 걸어 볼게요");
+    await wait(800);
+    assert.deepEqual(finals, ["일어나세요", "천천히 걸어 볼게요"]);
+  });
+});
 
 describe("mic hold while the phone reads Korean aloud", () => {
   let finals: string[] = [];

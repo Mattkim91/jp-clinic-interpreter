@@ -483,17 +483,42 @@ async function useLiveText(quietMs: number): Promise<boolean> {
   return true;
 }
 
-/** A breath: start translating what was heard, so it is ready if this was the end. */
+/** Last sentence translated ahead, so the same words are not asked twice. */
+let aheadText = "";
+
+/**
+ * Start the translation the card will ask for, before the card exists. The same requests
+ * as fill()/fillOther()/fillPatient() make, so they find the answer already on its way.
+ */
+function translateAhead(text: string, side: SpeechLang): void {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (!clean || clean === aheadText) return;
+  aheadText = clean;
+  const lang = patientLang;
+  const ignore = () => {};
+  const keyed = Boolean(getGeminiKey());
+  if (side !== "ko") {
+    if (keyed) translateToKoWithGemini(clean, lang).catch(ignore);
+    else translateToKo(clean, lang).catch(ignore);
+    return;
+  }
+  if (lang !== "ja") {
+    if (fixedPhrase(clean, lang)) return;
+    if (keyed) translateToWithGemini(clean, lang).catch(ignore);
+    else translateFromKo(rewriteQuery(clean), lang).catch(ignore);
+    return;
+  }
+  const prepared = prepare(clean);
+  if (prepared.overrideJa) return;
+  if (keyed) translateWithGemini(clean).catch(ignore);
+  else translateFromKo(prepared.query, "ja").catch(ignore);
+}
+
+/** A breath in 동시통역: start translating what was heard, so it is ready if this was the end. */
 function hushPiece(): void {
   const text = live?.ready() ? live.text() : "";
   const side = text ? scriptLang(text, patientLang) : null;
-  if (!side || !getGeminiKey()) return;
-  const lang = patientLang;
-  const ignore = () => {};
-  if (side !== "ko") translateToKoWithGemini(text, lang).catch(ignore);
-  else if (lang !== "ja") {
-    if (!fixedPhrase(text, lang)) translateToWithGemini(text, lang).catch(ignore);
-  } else if (!prepare(text).overrideJa) translateWithGemini(text).catch(ignore);
+  if (side) translateAhead(text, side);
 }
 
 /** First short pause: if the sentence is clearly over, translate now instead of waiting. */
@@ -851,6 +876,7 @@ export function startApp(): void {
   const wake = video ? createWake(video) : null;
   const mic = createListener({
     onFinal: (text, lang) => (lang === "ko" ? submit(text) : submitPatient(text, lang)),
+    onLikely: (text, lang) => translateAhead(text, lang),
     onInterim: (text) => {
       interim = text;
       interimAt = Date.now();
@@ -1038,6 +1064,7 @@ export function startApp(): void {
     if (aloud.some((item) => micWouldHear(item.lang, lang))) stopSpeaking();
     hearLang = lang;
     mic.start(lang);
+    warmGemini();
     render();
     if (!wasLive) {
       void wake?.acquire(true).then((acquired) => {

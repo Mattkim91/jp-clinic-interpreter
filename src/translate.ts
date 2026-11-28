@@ -81,8 +81,26 @@ function rehabJa(ja: string, korean: string): string {
   return out;
 }
 
+/** The same sentence asked again soon (it was started early, while the speaker paused): one request. */
+const recent = new Map<string, { at: number; answer: Promise<string> }>();
+
+function once(id: string, ask: () => Promise<string>): Promise<string> {
+  const now = Date.now();
+  for (const [old, item] of recent) if (now - item.at > 20000) recent.delete(old);
+  const known = recent.get(id);
+  if (known) return known.answer;
+  const answer = ask();
+  recent.set(id, { at: now, answer });
+  answer.catch(() => recent.delete(id));
+  return answer;
+}
+
 /** Keyless Korean → patient language. clients5 first, then the public gtx endpoint. */
-export async function translateFromKo(korean: string, lang: PatientLang): Promise<string> {
+export function translateFromKo(korean: string, lang: PatientLang): Promise<string> {
+  return once(`from ${lang} ${korean.trim()}`, () => askFromKo(korean, lang));
+}
+
+async function askFromKo(korean: string, lang: PatientLang): Promise<string> {
   const q = encodeURIComponent(korean);
   const attempts = [translateClients5, translateGtx, translateClients5, translateGtx];
   const deadline = Date.now() + BUDGET_MS;
@@ -103,7 +121,11 @@ export async function translateFromKo(korean: string, lang: PatientLang): Promis
 }
 
 /** Keyless patient language → Korean via the public Google endpoints. No politify. */
-export async function translateToKo(spoken: string, lang: PatientLang): Promise<string> {
+export function translateToKo(spoken: string, lang: PatientLang): Promise<string> {
+  return once(`to ${lang} ${spoken.trim()}`, () => askToKo(spoken, lang));
+}
+
+async function askToKo(spoken: string, lang: PatientLang): Promise<string> {
   const q = encodeURIComponent(spoken);
   const deadline = Date.now() + BUDGET_MS;
   const attempts = [

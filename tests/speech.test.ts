@@ -1,6 +1,30 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appendChunk, collapseRepeats, endsSentence, endsSentenceJa, flushDelay, PAUSE_AFTER_ENDING, PAUSE_WITHOUT_ENDING, recognitionLang } from "../src/speech.ts";
+import { afterEarly } from "../src/speech.ts";
+
+describe("endings clear enough to send early", () => {
+  it("leaves endings that often continue to the recognizer", async () => {
+    const { endsClearly } = await import("../src/speech.ts");
+    for (const ko of ["무릎 펴 보세요", "아프세요?", "괜찮습니다", "앉을까"]) assert.equal(endsClearly(ko, "ko"), true, ko);
+    for (const ko of ["숨 참지", "엉덩이 들고", "오른쪽 다리는", "잡으면 안 되지"]) assert.equal(endsClearly(ko, "ko"), false, ko);
+    assert.equal(endsClearly("膝を伸ばしてください", "ja"), true);
+    assert.equal(endsClearly("痛い", "ja"), false);
+    assert.equal(endsClearly("My knee hurts.", "en"), true);
+    assert.equal(endsClearly("My knee hurts", "en"), false);
+  });
+});
+
+describe("confirmation of a sentence sent early", () => {
+  it("drops the same sentence, a small correction, or a repeat, and keeps new words", () => {
+    assert.equal(afterEarly("무릎 펴세요", "무릎 펴세요."), "");
+    assert.equal(afterEarly("무릎 펴세요", "무릎을 펴세요"), "");
+    assert.equal(afterEarly("膝を伸ばして", "膝を伸ばして"), "");
+    assert.equal(afterEarly("일어나세요", "일어나세요 천천히 걸어 볼게요"), "천천히 걸어 볼게요");
+    assert.equal(afterEarly("앉으세요", "다리를 쭉 펴고 천천히 일어나 보세요"), "다리를 쭉 펴고 천천히 일어나 보세요");
+    assert.equal(afterEarly("Please sit", "Please sit."), "");
+  });
+});
+import { appendChunk, collapseRepeats, endsSentence, endsSentenceJa, flushDelay, PAUSE_AFTER_ENDING, PAUSE_CLEAR_END, PAUSE_WITHOUT_ENDING, recognitionLang } from "../src/speech.ts";
 
 describe("sentence end detection", () => {
   it("recognizes finished Korean sentences", () => {
@@ -15,7 +39,10 @@ describe("sentence end detection", () => {
   });
   it("uses a longer pause when the sentence is not finished", () => {
     assert.equal(flushDelay("무릎을 펴서"), PAUSE_WITHOUT_ENDING);
-    assert.equal(flushDelay("무릎 펴세요"), PAUSE_AFTER_ENDING);
+    assert.equal(flushDelay("무릎 펴세요"), PAUSE_CLEAR_END);
+    assert.equal(flushDelay("숨 참지"), PAUSE_AFTER_ENDING);
+    assert.equal(PAUSE_AFTER_ENDING, 700);
+    assert.equal(PAUSE_CLEAR_END, 500);
   });
   it("joins chunks into one sentence without repeats", () => {
     let p = appendChunk("", "숨을 크게 들이쉬고");
@@ -53,11 +80,12 @@ describe("japanese sentence end detection", () => {
     }
   });
   it("uses the same pause logic in Japanese", () => {
-    assert.equal(flushDelay("痛いです", "ja"), PAUSE_AFTER_ENDING);
+    assert.equal(flushDelay("痛いです", "ja"), PAUSE_CLEAR_END);
+    assert.equal(flushDelay("痛い", "ja"), PAUSE_AFTER_ENDING);
     assert.equal(flushDelay("膝が", "ja"), PAUSE_WITHOUT_ENDING);
   });
   it("keeps Korean detection as the default", () => {
-    assert.equal(flushDelay("무릎 펴세요"), PAUSE_AFTER_ENDING);
+    assert.equal(flushDelay("무릎 펴세요"), PAUSE_CLEAR_END);
     assert.equal(endsSentence("痛いです"), false);
     assert.equal(recognitionLang("ja"), "ja-JP");
     assert.equal(recognitionLang("ko"), "ko-KR");

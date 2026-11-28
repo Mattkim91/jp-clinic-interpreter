@@ -96,7 +96,9 @@ describe("english and arabic listening", () => {
     assert.equal(endsSentence("هل انتهينا؟", "ar"), true);
     assert.equal(flushDelay("my knee hurts", "en"), 1500);
     assert.equal(flushDelay("عندي ألم", "ar"), 1500);
-    assert.equal(flushDelay("아파요", "ko"), 700);
+    assert.equal(flushDelay("아파요", "ko"), 500);
+    assert.equal(flushDelay("숨 참지", "ko"), 700);
+    assert.equal(flushDelay("my knee hurts.", "en"), 500);
     assert.equal(flushDelay("痛くて", "ja"), 3000);
   });
 

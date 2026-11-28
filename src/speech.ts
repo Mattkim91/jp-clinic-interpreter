@@ -38,6 +38,20 @@ export function endsSentence(text: string, lang: SpeechLang = "ko"): boolean {
   return (lang === "ja" ? SENTENCE_END_JA : SENTENCE_END).test(text.trim());
 }
 
+/**
+ * Endings that leave no doubt, for sending before the recognizer confirms the words.
+ * "~지" (숨 참지 … 마세요) or "~い" (痛い … です) often continue, so they wait for confirmation as before.
+ */
+const CLEAR_END: Record<"ko" | "ja", RegExp> = {
+  ko: /(요|니다|니까|세요|까)[\s.?!~。…]*$|[.?!。？！]\s*$/,
+  ja: /(です|ます|ました|ません|でした|ましょう|ください|下さい|ですか|ますか)[。？！?!…\s]*$|[。？！?!]\s*$/,
+};
+
+export function endsClearly(text: string, lang: SpeechLang = "ko"): boolean {
+  if (lang === "en" || lang === "ar") return SENTENCE_END_PUNCT.test(text.trim());
+  return CLEAR_END[lang].test(text.trim());
+}
+
 /** True when the buffered Japanese looks like a complete sentence. */
 export function endsSentenceJa(text: string): boolean {
   return endsSentence(text, "ja");
@@ -45,11 +59,14 @@ export function endsSentenceJa(text: string): boolean {
 
 /** Silence (ms) to wait before translating: short once a sentence ending is heard, long otherwise. */
 export const PAUSE_AFTER_ENDING = 700;
+/** (v3.6) After an ending that leaves no doubt (~요, ~니다, ください): 0.5 s, chosen by the user. */
+export const PAUSE_CLEAR_END = 500;
 export const PAUSE_WITHOUT_ENDING = 3000;
 /** English/Arabic patients: endings cannot be heard, so a middle pause decides. */
 export const PAUSE_NO_ENDING_WORDS = 1500;
 
 export function flushDelay(text: string, lang: SpeechLang = "ko"): number {
+  if (endsClearly(text, lang)) return PAUSE_CLEAR_END;
   if (endsSentence(text, lang)) return PAUSE_AFTER_ENDING;
   return lang === "en" || lang === "ar" ? PAUSE_NO_ENDING_WORDS : PAUSE_WITHOUT_ENDING;
 }
@@ -108,6 +125,31 @@ export function appendChunk(pending: string, chunk: string, lang: SpeechLang = "
   return collapseRepeats(`${pending} ${c}`);
 }
 
+function letters(text: string): string {
+  return text.toLowerCase().replace(/[\s.,!?、。！？…~'"-]/g, "");
+}
+
+/**
+ * A sentence was already sent from the still-unconfirmed text (sooner); now the recognizer confirms it.
+ * Returns only what was not sent yet: "" for the same sentence (or a small correction of it).
+ */
+export function afterEarly(sent: string, confirmed: string): string {
+  const s = letters(sent);
+  const c = letters(confirmed);
+  if (!c || c === s || s.includes(c)) return "";
+  if (c.startsWith(s)) {
+    // Keep the words that came after the sentence already sent.
+    let seen = 0;
+    for (let i = 0; i < confirmed.length; i++) {
+      if (letters(confirmed[i])) seen += 1;
+      if (seen === s.length) return confirmed.slice(i + 1).replace(/^[\s.,!?、。！？…~]+/, "").trim();
+    }
+    return "";
+  }
+  // About as long as what was sent: the recognizer only corrected a word.
+  return Math.abs(c.length - s.length) <= Math.max(2, s.length * 0.3) ? "" : confirmed;
+}
+
 type RecHandle = {
   lang: string;
   continuous: boolean;
@@ -161,6 +203,8 @@ function slicesOf(event: RecEvent): RecSlice[] {
 export function createListener(options: {
   onFinal: (text: string, lang: SpeechLang) => void;
   onInterim: (text: string) => void;
+  /** What the sentence will probably be, while waiting for it to end: worth translating already. */
+  onLikely?: (text: string, lang: SpeechLang) => void;
   onState: (state: ListenState) => void;
   onError: (message: string) => void;
   kind?: PlatformKind;
@@ -196,6 +240,10 @@ export function createListener(options: {
   let pending = "";
   let flushTimer = 0;
   let currentLang: SpeechLang = "ko";
+  /** A finished-sounding sentence still being shown as unconfirmed; it is sent if the words stop changing. */
+  let armed = "";
+  /** Sent from unconfirmed words; its confirmation must not become a second card. */
+  let sentEarly = "";
 
   const clearFlush = () => {
     if (flushTimer) window.clearTimeout(flushTimer);
@@ -204,16 +252,32 @@ export function createListener(options: {
 
   const flush = () => {
     clearFlush();
-    const text = collapseRepeats(pending);
+    // The unconfirmed words, when they say more than what is confirmed.
+    const early = armed && letters(armed).length > letters(pending).length;
+    const text = collapseRepeats(early ? armed : pending);
     pending = "";
+    armed = "";
+    if (early) sentEarly = text;
     options.onInterim("");
     if (text) options.onFinal(text, currentLang);
   };
 
   const scheduleFlush = () => {
     clearFlush();
+    armed = "";
     if (!pending) return;
     flushTimer = window.setTimeout(flush, flushDelay(pending, currentLang));
+  };
+
+  /**
+   * The words heard so far already end a sentence: count the wait from now, not from when the
+   * recognizer confirms them (that can take most of a second more). New words start it again.
+   */
+  const armFlush = (heard: string) => {
+    if (armed === heard && flushTimer) return;
+    clearFlush();
+    armed = heard;
+    flushTimer = window.setTimeout(flush, flushDelay(heard, currentLang));
   };
 
   const clearTimer = () => {
@@ -242,13 +306,32 @@ export function createListener(options: {
     };
     rec.onresult = (event) => {
       quietRestarts = 0;
-      const { finals, interim } = collectUtterance(slicesOf(event), event.resultIndex);
+      const utterance = collectUtterance(slicesOf(event), event.resultIndex);
+      let { finals, interim } = utterance;
+      if (sentEarly) {
+        // The confirmation of a sentence that was already sent: keep only what is new.
+        if (finals.length) {
+          const rest = afterEarly(sentEarly, finals.reduce((all, text) => appendChunk(all, text, currentLang), ""));
+          sentEarly = "";
+          finals = rest ? [rest] : [];
+        } else if (interim && !afterEarly(sentEarly, interim)) {
+          interim = "";
+        }
+      }
       for (const text of finals) pending = appendChunk(pending, text, currentLang);
-      options.onInterim(interim ? appendChunk(pending, interim, currentLang) : pending);
+      const heard = interim ? appendChunk(pending, interim, currentLang) : pending;
+      options.onInterim(heard);
+      // Already sounds finished, or nothing more is coming: the translation can start during the wait.
+      if (heard && (!interim || endsSentence(heard, currentLang))) options.onLikely?.(collapseRepeats(heard), currentLang);
       if (interim) {
-        // Still talking: wait until the sentence is actually finished.
-        clearFlush();
-      } else {
+        // Still talking, unless the words so far already end a sentence.
+        if (endsClearly(heard, currentLang)) armFlush(heard);
+        else {
+          clearFlush();
+          armed = "";
+        }
+      } else if (!(armed && letters(armed) === letters(pending) && flushTimer)) {
+        // Confirmed as heard: the wait that already started keeps running.
         scheduleFlush();
       }
     };
@@ -327,6 +410,8 @@ export function createListener(options: {
       clearTimer();
       clearFlush();
       pending = "";
+      armed = "";
+      sentEarly = "";
       if (recognition) {
         try {
           recognition.onend = null;
